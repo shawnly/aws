@@ -1,0 +1,5 @@
+vpc_id       = "vpc-0987654321abcdef"
+vpc_cidr     = "10.1.0.0/16"
+project      = "my-prod-project"
+commit_id    = "prod-commit-id"
+environment  = "prod"
