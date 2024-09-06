@@ -1,14 +1,10 @@
-variable "aws_profile" {
-  type        = string
-  description = "AWS profile to use"
-}
+# Fetch security group by Name tag
+data "aws_security_group" "https_sg" {
+  filter {
+    name   = "tag:Name"
+    values = [var.security_group_tag_name]
+  }
 
-variable "tag_name" {
-  type        = string
-  default     = "DomainEC2Map"
-}
-
-variable "tag_value" {
-  type        = string
-  default     = "xsv-dev-01"
+  # Optionally, you can pass a vpc_id if needed
+  vpc_id = var.vpc_id
 }
