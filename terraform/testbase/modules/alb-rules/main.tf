@@ -18,11 +18,12 @@ resource "aws_lb_target_group" "ec2_tg" {
     healthy_threshold   = 3
     unhealthy_threshold = 3
   }
+}
 
-  target {
-    id   = "131.129.18.167"                       # EC2 instance IP address
-    port = 23701                                  # Forward traffic to this port
-  }
+resource "aws_lb_target_group_attachment" "tg_attachment" {
+  target_group_arn = aws_lb_target_group.ec2_tg.arn
+  target_id        = "131.129.18.167"             # EC2 instance IP address
+  port             = 23701                        # Forward traffic to this port
 }
 
 resource "aws_lb_listener_rule" "forward_rule" {
