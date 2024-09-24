@@ -90,3 +90,86 @@ def lambda_handler(event, context):
             'body': f"Error updating DynamoDB: {update_result['message']}"
         }
 
+
+
+import boto3
+from botocore.exceptions import ClientError
+
+# Initialize the DynamoDB resource and EC2 client
+dynamodb = boto3.resource('dynamodb')
+ec2 = boto3.client('ec2')
+
+def retrieve_instance_id_by_event_id(event_id):
+    """
+    Retrieves the instance_id from the DynamoDB table for a given event_id.
+
+    Parameters:
+    - event_id (str): The unique identifier for the event (primary key in DynamoDB).
+
+    Returns:
+    - A string with the instance_id if found, otherwise an error message.
+    """
+    table_name = 'sfn_event_table'  # DynamoDB table name
+    sfn_event_table = dynamodb.Table(table_name)
+    
+    try:
+        # Query the DynamoDB table to get the instance_id for the given event_id
+        response = sfn_event_table.get_item(
+            Key={
+                'event_id': event_id  # Primary key
+            }
+        )
+
+        # Check if the item is present in the response
+        if 'Item' in response:
+            instance_id = response['Item'].get('instance_id')
+            print(f"Successfully retrieved instance_id {instance_id} for event_id {event_id}")
+            return instance_id
+        else:
+            raise ValueError(f"No item found for event_id {event_id}")
+
+    except ClientError as e:
+        # Handle errors from the DynamoDB operation
+        error_message = f"Failed to retrieve instance_id for event_id {event_id}: {e.response['Error']['Message']}"
+        print(error_message)
+        return None
+
+    except ValueError as ve:
+        # Handle case where no item is found
+        print(str(ve))
+        return None
+
+
+def stop_ec2_instance(instance_id):
+    """
+    Stops an EC2 instance based on the provided instance_id.
+
+    Parameters:
+    - instance_id (str): The EC2 instance ID that should be stopped.
+
+    Returns:
+    - A dictionary indicating the success or failure of the stop operation.
+    """
+    try:
+        # Stop the EC2 instance
+        response = ec2.stop_instances(
+            InstanceIds=[instance_id]
+        )
+        
+        # Retrieve the current state of the instance after stop call
+        stopping_state = response['StoppingInstances'][0]['CurrentState']['Name']
+        print(f"Successfully stopped instance {instance_id}. Current state: {stopping_state}")
+        
+        return {
+            'status': 'success',
+            'message': f"Instance {instance_id} is now in {stopping_state} state."
+        }
+
+    except ClientError as e:
+        # Handle errors during the EC2 stop operation
+        error_message = f"Failed to stop instance {instance_id}: {e.response['Error']['Message']}"
+        print(error_message)
+        return {
+            'status': 'error',
+            'message': error_message
+        }
