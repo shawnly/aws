@@ -173,3 +173,37 @@ def stop_ec2_instance(instance_id):
             'status': 'error',
             'message': error_message
         }
+
+def terminate_ec2_instance(instance_id):
+    """
+    Terminates an EC2 instance based on the provided instance_id.
+
+    Parameters:
+    - instance_id (str): The EC2 instance ID that should be terminated.
+
+    Returns:
+    - A dictionary indicating the success or failure of the termination operation.
+    """
+    try:
+        # Terminate the EC2 instance
+        response = ec2.terminate_instances(
+            InstanceIds=[instance_id]
+        )
+        
+        # Retrieve the current state of the instance after termination call
+        termination_state = response['TerminatingInstances'][0]['CurrentState']['Name']
+        print(f"Successfully terminated instance {instance_id}. Current state: {termination_state}")
+        
+        return {
+            'status': 'success',
+            'message': f"Instance {instance_id} is now in {termination_state} state."
+        }
+
+    except ClientError as e:
+        # Handle errors during the EC2 termination operation
+        error_message = f"Failed to terminate instance {instance_id}: {e.response['Error']['Message']}"
+        print(error_message)
+        return {
+            'status': 'error',
+            'message': error_message
+        }
