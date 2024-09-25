@@ -1,0 +1,17 @@
+services:
+  activemq:
+    image: rmohr/activemq:latest
+    container_name: activemq
+    environment:
+      - ACTIVEMQ_ADMIN_LOGIN=admin
+      - ACTIVEMQ_ADMIN_PASSWORD=admin
+    ports:
+      - "8161:8161"  # Web console port
+      - "61616:61616"  # AMQP port
+      - "5672:5672"    # AMQP support
+      - "61613:61613"  # STOMP
+      - "1883:1883"    # MQTT
+      - "61614:61614"  # WS
+    volumes:
+      - ./data:/opt/activemq/data
+      - ./conf:/opt/activemq/conf
