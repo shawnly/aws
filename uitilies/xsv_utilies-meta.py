@@ -160,6 +160,3 @@ def put_s3_upload_event_item(table_name, event_id, attributes):
         print(f"Error putting event item: {e}")
         return False
 
-def update_s3_upload_event_item(table_name, event_id, update_expression, expression_attribute_values):
-    """
-    Update S3 upload event item in xsv_s3
