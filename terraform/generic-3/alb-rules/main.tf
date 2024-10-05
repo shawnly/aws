@@ -18,7 +18,7 @@ resource "aws_lb_listener_rule" "microservice_forwarding_rule" {
 
 resource "aws_lb_target_group" "microservice_target_group" {
   count       = length(var.forwarding_rules)
-  name        = "${var.project}-${var.environment}-${var.forwarding_rules[count.index].name}"
+  name = lower(replace("${var.project}-${var.environment}-${var.forwarding_rules[count.index].name}", "_", "-"))
   port        = var.forwarding_rules[count.index].port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
