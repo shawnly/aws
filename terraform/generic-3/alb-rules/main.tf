@@ -17,8 +17,10 @@ resource "aws_lb_listener_rule" "microservice_forwarding_rule" {
 }
 
 resource "aws_lb_target_group" "microservice_target_group" {
-  count       = length(var.forwarding_rules)
+  count = length(var.forwarding_rules)
+
   name = lower(replace("${var.project}-${var.environment}-${var.forwarding_rules[count.index].name}", "_", "-"))
+
   port        = var.forwarding_rules[count.index].port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
@@ -30,8 +32,14 @@ resource "aws_lb_target_group" "microservice_target_group" {
     timeout             = 5
     healthy_threshold   = 3
     unhealthy_threshold = 3
+    matcher {
+      http_code = var.forwarding_rules[count.index].response_code  # Use the new variable here
+    }
   }
 }
+
+
+
 
 resource "aws_lb_target_group_attachment" "ec2_attachment" {
   count = length(var.forwarding_rules)
