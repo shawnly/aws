@@ -19,8 +19,8 @@ data "aws_instance" "selected_ec2" {
 resource "aws_lb_target_group" "microservice_target_group" {
   count = length(var.forwarding_rules)
 
-  name = lower(replace("${local.domain}-${local.environment}-${var.forwarding_rules[count.index].name}", "_", "-"))
-
+  name = lower(replace("${local.domain}-${local.environment}-${var.forwarding_rules[count.index].name}-tg", "_", "-"))
+  
   port        = var.forwarding_rules[count.index].port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
