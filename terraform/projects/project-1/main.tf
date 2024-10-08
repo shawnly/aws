@@ -4,6 +4,22 @@ provider "aws" {
   region  = "us-east-1"  # Adjust as per your region
 }
 
+variable "aws_profile" {
+  description = "The AWS CLI profile to use."
+  type        = string
+}
+
+variable "domain_ec2_map" {
+  description = "The combined domain, environment, and event ID."
+  type        = string
+}
+
+variable "security_groups" {
+  description = "List of security groups for the ALB."
+  type        = list(string)
+}
+
+
 # Call to the internal-alb module (previously in main.tf)
 module "internal_alb" {
   source          = "../../modules/internal-alb"
