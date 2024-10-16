@@ -1,0 +1,9 @@
+{
+    "requestContext": {
+      "connectionId": "abc123",
+      "domainName": "example.com",
+      "stage": "Prod"
+    },
+    "body": "{\"message\": \"Hello from EC2!\"}"
+  }
+  

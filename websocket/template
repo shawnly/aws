@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  WebSocket API with API Gateway and Lambda
+
+Resources:
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties: 
+      Name: WebSocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/onConnect/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Events:
+        Connect:
+          Type: Api
+          Properties:
+            ApiId: !Ref WebSocketApi
+            RouteKey: $connect
+
+  OnDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/onDisconnect/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Events:
+        Disconnect:
+          Type: Api
+          Properties:
+            ApiId: !Ref WebSocketApi
+            RouteKey: $disconnect
+
+  SendMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/sendMessage/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Events:
+        SendMessage:
+          Type: Api
+          Properties:
+            ApiId: !Ref WebSocketApi
+            RouteKey: sendMessage
+
+  WebSocketDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    Properties:
+      ApiId: !Ref WebSocketApi
+    DependsOn: 
+      - OnConnectFunction
+      - OnDisconnectFunction
+      - SendMessageFunction
+
+Outputs:
+  WebSocketApiEndpoint:
+    Description: "WebSocket API endpoint"
+    Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
