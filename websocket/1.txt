@@ -1,0 +1,186 @@
+project_root/
+├── lambda_functions/
+│   ├── connect.py
+│   ├── disconnect.py
+│   └── message.py
+├── templates/
+│   └── api_gateway_template.yaml
+└── test_client.py
+
+# connect.py
+import json
+
+def lambda_handler(event, context):
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Connected')
+    }
+
+# disconnect.py
+import json
+
+def lambda_handler(event, context):
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Disconnected')
+    }
+
+# message.py
+import json
+import boto3
+
+def lambda_handler(event, context):
+    client = boto3.client('apigatewaymanagementapi', endpoint_url=f"https://{event['requestContext']['domainName']}/{event['requestContext']['stage']}")
+    
+    connection_id = event['requestContext']['connectionId']
+    message = json.loads(event['body'])['message']
+    
+    response = client.post_to_connection(
+        ConnectionId=connection_id,
+        Data=json.dumps({"message": f"Echo: {message}"}).encode('utf-8')
+    )
+    
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Message sent')
+    }
+
+# api_gateway_template.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: WebSocket API Gateway with Lambda functions
+
+Resources:
+  WebSocketAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: WebSocketAPI
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectInteg
+
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectFunction.Arn}/invocations
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectInteg
+
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFunction.Arn}/invocations
+
+  MessageRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: message
+      AuthorizationType: NONE
+      OperationName: MessageRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref MessageInteg
+
+  MessageInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MessageFunction.Arn}/invocations
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - ConnectRoute
+      - DisconnectRoute
+      - MessageRoute
+    Properties:
+      ApiId: !Ref WebSocketAPI
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: prod
+      Description: Prod Stage
+      DeploymentId: !Ref Deployment
+      ApiId: !Ref WebSocketAPI
+
+  ConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda_functions
+      Handler: connect.lambda_handler
+      Runtime: python3.8
+
+  DisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda_functions
+      Handler: disconnect.lambda_handler
+      Runtime: python3.8
+
+  MessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda_functions
+      Handler: message.lambda_handler
+      Runtime: python3.8
+      Policies:
+        - AmazonAPIGatewayInvokeFullAccess
+
+# test_client.py
+import websocket
+import json
+
+def on_message(ws, message):
+    print(f"Received message: {message}")
+
+def on_error(ws, error):
+    print(f"Error: {error}")
+
+def on_close(ws, close_status_code, close_msg):
+    print("### closed ###")
+
+def on_open(ws):
+    print("Connected")
+    ws.send(json.dumps({"action": "message", "message": "Hello, WebSocket!"}))
+
+if __name__ == "__main__":
+    websocket.enableTrace(True)
+    ws = websocket.WebSocketApp("wss://YOUR_API_GATEWAY_ID.execute-api.YOUR_REGION.amazonaws.com/prod",
+                                on_open=on_open,
+                                on_message=on_message,
+                                on_error=on_error,
+                                on_close=on_close)
+
+    ws.run_forever()
