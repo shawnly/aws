@@ -1,32 +1,47 @@
 import boto3
-import requests
-from botocore.exceptions import ClientError
 
-sns_client = boto3.client('sns')
+# Initialize SNS client
+sns = boto3.client('sns', region_name='your-region')  # Replace with your region
 
-email_list = ['email1@example.com', 'email2@example.com', 'email3@example.com']
+# List of email addresses to confirm
+email_addresses = ['email1@example.com', 'email2@example.com', ...]
 
-for email in email_list:
+# Your SNS topic ARN
+topic_arn = 'your-topic-arn'
+
+# Subscribe and confirm each email address
+for email in email_addresses:
     try:
-        subscription_arn = sns_client.subscribe(
-            TopicArn='your_sns_topic_arn',
+        # Subscribe email address
+        response = sns.subscribe(
+            TopicArn=topic_arn,
             Protocol='email',
             Endpoint=email
         )
+        subscription_arn = response['SubscriptionArn']
+        print(f'Subscribed {email}. Subscription ARN: {subscription_arn}')
 
-        response = sns_client.get_subscription_attributes(
+        # Get subscription confirmation status
+        status_response = sns.get_subscription_attributes(
             SubscriptionArn=subscription_arn
         )
-        confirmation_url = response['Attributes']['SubscriptionArn']
+        status = status_response['Attributes']['SubscriptionStatus']
 
-        print(f"Confirmation URL for {email}: {confirmation_url}")
+        # Confirm subscription if not already confirmed
+        if status != 'Confirmed':
+            # Get confirmation token from email (manually or using an email parsing library)
+            # For demonstration purposes, assume you have the token
+            confirmation_token = 'your-confirmation-token'
 
-        # Automatically confirm the subscription
-        confirmation_response = requests.get(confirmation_url)
-        if confirmation_response.status_code == 200:
-            print(f"Subscription confirmed for {email}")
+            # Confirm subscription
+            sns.confirm_subscription(
+                TopicArn=topic_arn,
+                Token=confirmation_token,
+                AuthenticateOnUnsubscribe='true'
+            )
+            print(f'Confirmed subscription for {email}')
         else:
-            print(f"Error confirming subscription for {email}: {confirmation_response.text}")
-
-    except ClientError as e:
-        print(f"Error subscribing {email}: {e}")
+            print(f'{email} already confirmed')
+    except Exception as e:
+        print(f'Error processing {email}: {str(e)}')
+    
