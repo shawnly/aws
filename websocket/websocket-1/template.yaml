@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: WebSocket API using API Gateway and Lambda
+
+Resources:
+  # DynamoDB Table to store WebSocket connections
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties: 
+      Name: WebSocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketRouteDefault:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: 
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WebSocketIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketLambdaFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+
+  WebSocketLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: websocket_function/
+      Handler: app.lambda_handler
+      Runtime: python3.10
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          WEBSOCKET_API_ID: !Ref WebSocketApi
+
+  WebSocketDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    Properties: 
+      ApiId: !Ref WebSocketApi
+    DependsOn:
+      - WebSocketRouteDefault
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: prod
+      AutoDeploy: true
+
+Outputs:
+  WebSocketUrl:
+    Description: "WebSocket URL"
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
