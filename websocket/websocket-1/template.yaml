@@ -44,6 +44,8 @@ Resources:
       Runtime: python3.10
       Policies:
         - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
         - Statement:
             Effect: Allow
             Action:
