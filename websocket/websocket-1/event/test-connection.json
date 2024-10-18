@@ -1,0 +1,8 @@
+{
+    "requestContext": {
+      "connectionId": "test-connection-id",
+      "routeKey": "$default"
+    },
+    "body": "{\"data\": \"test message from wscat\"}"
+  }
+  
