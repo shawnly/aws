@@ -1,8 +1,21 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: WebSocket API with ping-pong message handling
+Description: WebSocket API with ping-pong message handling and DynamoDB integration
 
 Resources:
+
+  # DynamoDB Table to store WebSocket connection data
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: WebSocketConnections
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
 
   # WebSocket API resource
   WebSocketApi:
@@ -57,7 +70,12 @@ Resources:
       MemorySize: 128
       Timeout: 5
       Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
         - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref WebSocketConnectionsTable
 
   # Lambda function for handling WebSocket disconnection events
   WebSocketDisconnectLambda:
@@ -69,9 +87,14 @@ Resources:
       MemorySize: 128
       Timeout: 5
       Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
         - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref WebSocketConnectionsTable
 
-  # Lambda function for handling messages, including ping-pong
+  # Lambda function for handling messages, including ping-pong and querying the DynamoDB table
   WebSocketMessageLambda:
     Type: AWS::Serverless::Function
     Properties:
@@ -81,6 +104,8 @@ Resources:
       MemorySize: 128
       Timeout: 5
       Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
         - Statement:
             Effect: Allow
             Action:
@@ -90,27 +115,7 @@ Resources:
       Environment:
         Variables:
           WEBSOCKET_API_URL: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
-
-  # IAM Role for WebSocket Lambda functions (to manage connections)
-  WebSocketApiRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: WebSocketApiPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - execute-api:ManageConnections
-                Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/@connections/*
+          DYNAMODB_TABLE_NAME: !Ref WebSocketConnectionsTable
 
 Outputs:
   WebSocketApiUrl:
