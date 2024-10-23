@@ -116,7 +116,7 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: $connect
       AuthorizationType: NONE
-      Target: !Sub arn:aws:apigateway:${AWS::Region}::lambda:path/2015-03-31/functions/${WebSocketConnectLambda.Arn}/invocations
+      Target: !Sub integrations/${WebSocketConnectIntegration}
 
   # WebSocket $disconnect route (handles disconnections)
   WebSocketDisconnectRoute:
@@ -125,7 +125,7 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: $disconnect
       AuthorizationType: NONE
-      Target: !Sub arn:aws:apigateway:${AWS::Region}::lambda:path/2015-03-31/functions/${WebSocketDisconnectLambda.Arn}/invocations
+      Target: !Sub integrations/${WebSocketDisconnectIntegration}
 
   # WebSocket $default route (handles all other messages, including ping-pong)
   WebSocketDefaultRoute:
@@ -134,7 +134,7 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: $default
       AuthorizationType: NONE
-      Target: !Sub arn:aws:apigateway:${AWS::Region}::lambda:path/2015-03-31/functions/${WebSocketMessageLambda.Arn}/invocations
+      Target: !Sub integrations/${WebSocketMessageIntegration}
 
   # WebSocket deployment stage
   WebSocketStage:
