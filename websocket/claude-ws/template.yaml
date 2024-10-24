@@ -3,7 +3,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
 Resources:
-  # DynamoDB table to store connection IDs
   ConnectionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -16,7 +15,6 @@ Resources:
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-  # WebSocket API
   WebSocketAPI:
     Type: AWS::ApiGatewayV2::Api
     Properties:
@@ -66,18 +64,19 @@ Resources:
       IntegrationUri:
         Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectFunction.Arn}/invocations
 
-  # Message Route
+  # Message Route - Updated
   MessageRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref WebSocketAPI
       RouteKey: sendmessage
       AuthorizationType: NONE
-      OperationName: MessageRoute
+      OperationName: SendMessageRoute
       Target: !Join
         - '/'
         - - 'integrations'
           - !Ref MessageInteg
+      RouteResponseSelectionExpression: $default
 
   MessageInteg:
     Type: AWS::ApiGatewayV2::Integration
@@ -86,8 +85,30 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri:
         Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SendMessageFunction.Arn}/invocations
+      IntegrationMethod: POST
+      PassthroughBehavior: WHEN_NO_MATCH
 
-  # Stage
+  # Default Route - Added
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $default
+      AuthorizationType: NONE
+      OperationName: DefaultRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DefaultInteg
+
+  DefaultInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DefaultFunction.Arn}/invocations
+
   WebSocketStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
@@ -114,6 +135,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref ConnectionsTable
+      Timeout: 30
 
   OnDisconnectFunction:
     Type: AWS::Serverless::Function
@@ -127,6 +149,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref ConnectionsTable
+      Timeout: 30
 
   SendMessageFunction:
     Type: AWS::Serverless::Function
@@ -141,19 +164,37 @@ Resources:
             - Effect: Allow
               Action:
                 - 'execute-api:ManageConnections'
-              Resource:
+              Resource: 
                 - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*'
+        - CloudWatchLogsFullAccess
       Environment:
         Variables:
           TABLE_NAME: !Ref ConnectionsTable
+      Timeout: 30
 
-  # Lambda Permissions
+  DefaultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./src
+      Handler: default.handler
+      Runtime: python3.9
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - 'execute-api:ManageConnections'
+              Resource:
+                - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*'
+      Timeout: 30
+
+  # Lambda Permissions - Updated with explicit source ARN
   ConnectPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref OnConnectFunction
       Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$connect'
 
   DisconnectPermission:
     Type: AWS::Lambda::Permission
@@ -161,6 +202,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref OnDisconnectFunction
       Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$disconnect'
 
   MessagePermission:
     Type: AWS::Lambda::Permission
@@ -168,6 +210,15 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref SendMessageFunction
       Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/sendmessage'
+
+  DefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DefaultFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$default'
 
 Outputs:
   WebSocketURL:
