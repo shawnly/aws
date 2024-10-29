@@ -26,11 +26,6 @@ Resources:
           RequireNumbers: true
           RequireSymbols: true
           RequireUppercase: true
-      Schema:
-        - Name: email
-          AttributeDataType: String
-          Mutable: true
-          Required: true
 
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
@@ -44,20 +39,27 @@ Resources:
       UserPoolId: !Ref CognitoUserPool
       ClientName: app-client
       GenerateSecret: true
-      ExplicitAuthFlows:
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_CUSTOM_AUTH
-        - ALLOW_USER_PASSWORD_AUTH
+      ExplicitAuthFlows: []  # Empty as we're only using OAuth flows
       AllowedOAuthFlows:
         - client_credentials
       AllowedOAuthScopes:
-        - email
-        - openid
-        - profile
+        - custom-scope/read    # Custom scope for API access
+        - custom-scope/write   # Custom scope for API access
       AllowedOAuthFlowsUserPoolClient: true
       PreventUserExistenceErrors: ENABLED
-      SupportedIdentityProviders:
-        - COGNITO
+
+  # Resource server to define custom scopes
+  UserPoolResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      Identifier: "https://api.example.com"  # Can be any unique identifier
+      Name: "MyAPIServer"
+      Scopes: 
+        - ScopeName: read
+          ScopeDescription: "Read access to API"
+        - ScopeName: write
+          ScopeDescription: "Write access to API"
 
 Outputs:
   UserPoolId:
