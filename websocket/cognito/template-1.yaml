@@ -33,8 +33,22 @@ Resources:
       Domain: !Ref DomainPrefix
       UserPoolId: !Ref CognitoUserPool
 
+  # Resource server must be created before the client
+  UserPoolResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      Identifier: "api"  # Simple identifier
+      Name: "MyAPIServer"
+      Scopes: 
+        - ScopeName: read
+          ScopeDescription: "Read access to API"
+        - ScopeName: write
+          ScopeDescription: "Write access to API"
+
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
+    DependsOn: UserPoolResourceServer
     Properties:
       UserPoolId: !Ref CognitoUserPool
       ClientName: app-client
@@ -43,23 +57,10 @@ Resources:
       AllowedOAuthFlows:
         - client_credentials
       AllowedOAuthScopes:
-        - custom-scope/read    # Custom scope for API access
-        - custom-scope/write   # Custom scope for API access
+        - api/read    # Must be in format: resourceServerIdentifier/scopeName
+        - api/write   # Must be in format: resourceServerIdentifier/scopeName
       AllowedOAuthFlowsUserPoolClient: true
       PreventUserExistenceErrors: ENABLED
-
-  # Resource server to define custom scopes
-  UserPoolResourceServer:
-    Type: AWS::Cognito::UserPoolResourceServer
-    Properties:
-      UserPoolId: !Ref CognitoUserPool
-      Identifier: "https://api.example.com"  # Can be any unique identifier
-      Name: "MyAPIServer"
-      Scopes: 
-        - ScopeName: read
-          ScopeDescription: "Read access to API"
-        - ScopeName: write
-          ScopeDescription: "Write access to API"
 
 Outputs:
   UserPoolId:
