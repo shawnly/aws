@@ -56,7 +56,6 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
       AllowedOAuthFlows:
         - client_credentials
-        - refresh_token
       AllowedOAuthScopes:
         - api/read
         - api/write
