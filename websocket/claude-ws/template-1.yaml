@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for Cognito-authorized WebSocket API
+
+Parameters:
+  UserPoolName:
+    Type: String
+    Default: MyWebSocketUserPool
+    Description: Name of the Cognito User Pool
+  DomainPrefix:
+    Type: String
+    Default: my-ws-auth-domain
+    Description: Prefix for Cognito domain name
+  ApiName:
+    Type: String
+    Default: MyWebSocketAPI
+    Description: Name of the API Gateway WebSocket API
+
+Resources:
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref DomainPrefix
+      UserPoolId: !Ref CognitoUserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientName: ws-client
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      AllowedOAuthFlows:
+        - client_credentials
+        - refresh_token
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      PreventUserExistenceErrors: ENABLED
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: "hours"
+        IdToken: "hours"
+        RefreshToken: "days"
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref ApiName
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref WebSocketApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        audience:
+          - !Ref UserPoolClient
+        issuer: !GetAtt CognitoUserPool.RegionalUserPoolId
+
+  WebSocketRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      AuthorizationType: JWT
+      AuthorizerId: !Ref WebSocketAuthorizer
+      RouteKey: $connect
+      Target: !Join 
+        - "/"
+        - - "arn:aws:apigateway"
+          - !Ref AWS::Region
+          - "execute-api"
+          - !Ref WebSocketApi
+          - "connections"
+
+Outputs:
+  UserPoolId:
+    Description: ID of the Cognito User Pool
+    Value: !Ref CognitoUserPool
+  UserPoolClientId:
+    Description: ID of the Cognito User Pool Client
+    Value: !Ref UserPoolClient
+  UserPoolDomainName:
+    Description: Domain name for the Cognito User Pool
+    Value: !Sub ${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com
+  WebSocketApiUrl:
+    Description: URL of the WebSocket API
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${WebSocketApi.Stage}"
