@@ -1,0 +1,37 @@
+To set up DynamoDB for your client application, here are key requirements to ask about:
+
+    Data Structure and Schema:
+        What data types and attributes will be stored in each item?
+        Do they have specific primary key requirements (partition key only or partition and sort key)?
+
+    Capacity Mode:
+        Should the table use on-demand or provisioned capacity mode? Provisioned capacity allows for specific read and write capacity units, while on-demand automatically scales.
+
+    Throughput Requirements:
+        What are the expected read and write throughput needs? For provisioned mode, specify initial read and write capacity units.
+        Will there be peak usage times, or is the usage consistent?
+
+    Indexes:
+        Will they need secondary indexes (Global Secondary Indexes or Local Secondary Indexes) for queries on non-primary key attributes?
+
+    Access Patterns:
+        What types of queries will be used? (e.g., by primary key, by secondary indexes, scans).
+        Will they perform conditional updates or need specific filters?
+
+    Data Security:
+        Do they have specific encryption requirements for data at rest (DynamoDB uses AES-256 encryption by default)?
+        Any specific AWS Identity and Access Management (IAM) policies or roles for access control?
+
+    Backup and Restore:
+        Do they need on-demand backups or point-in-time recovery for disaster recovery?
+
+    DynamoDB Streams:
+        Will they need DynamoDB Streams to track changes in data for any real-time updates or triggers?
+
+    TTL (Time to Live):
+        Should some data items have automatic expiration (TTL) to reduce storage and control costs?
+
+    Geographical Requirements:
+        Are there specific AWS regions where the table needs to be deployed for latency or data residency concerns?
+
+Gathering these details will ensure you set up DynamoDB to meet the application's needs effectively. Let me know if you’d like help configuring any of these aspects!
