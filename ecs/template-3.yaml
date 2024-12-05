@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Infrastructure setup with ALB, ECS, and RDS with selectable services
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID
+  CidrBlock:
+    Type: String
+    Description: CIDR Block for the VPC
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Subnets for ALB and ECS
+  DeployServiceA:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Deploy service-a
+  DeployServiceB:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Deploy service-b
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow 8080 and 8090 for ALB and ECS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref CidrBlock
+        - IpProtocol: tcp
+          FromPort: 8090
+          ToPort: 8090
+          CidrIp: !Ref CidrBlock
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyApplicationLoadBalancer
+      Subnets: !Ref Subnets
+      SecurityGroups:
+        - !Ref SecurityGroup
+      Scheme: internet-facing
+      Type: application
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 200
+            ContentType: text/plain
+            MessageBody: "ALB is working!"
+
+  TargetGroupServiceA:
+    Condition: DeployServiceA
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: service-a-target
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckPath: /service-a/health
+
+  ListenerRuleServiceA:
+    Condition: DeployServiceA
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Conditions:
+        - Field: path-pattern
+          Values: ["/service-a/*"]
+      Priority: 1
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroupServiceA
+
+  TargetGroupServiceB:
+    Condition: DeployServiceB
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: service-b-target
+      Port: 8090
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckPath: /service-b/health
+
+  ListenerRuleServiceB:
+    Condition: DeployServiceB
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Conditions:
+        - Field: path-pattern
+          Values: ["/service-b/*"]
+      Priority: 2
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroupServiceB
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: MyECSCluster
+
+  ECSInstance:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-12345678 # Replace with ECS-optimized AMI
+      SecurityGroups:
+        - !Ref SecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+
