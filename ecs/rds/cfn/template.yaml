@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS RDS PostgreSQL Instance
+
+Parameters:
+  RdsEngineVersion:
+    Description: RDS PostgreSQL Engine Version
+    Type: String
+    Default: "12.22"
+  AvailabilityZone:
+    Description: Availability Zone for the RDS Instance
+    Type: String
+    Default: "us-east-1a"
+  InstanceType:
+    Description: DB instance class
+    Type: String
+    Default: "db.m5.xlarge"
+  AllocatedStorage:
+    Description: Allocated storage size in GB
+    Type: Number
+    Default: 100
+  VpcId:
+    Description: VPC where RDS instance will be created
+    Type: String
+  Tags:
+    Description: Tags for the resources
+    Type: CommaDelimitedList
+
+Resources:
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for RDS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0  # Change for specific IPs
+      Tags:
+        - Key: Name
+          Value: RDS-SecurityGroup
+
+  RdsDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref RdsEngineVersion
+      DBInstanceClass: !Ref InstanceType
+      AllocatedStorage: !Ref AllocatedStorage
+      MasterUsername: "postgres"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${AWS::StackName}-RdsPassword:SecretString:password}}"
+      DBSubnetGroupName: !Ref RdsSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RdsSecurityGroup.GroupId
+      Tags:
+        - Key: Environment
+          Value: !Select [0, !Ref Tags]
+        - Key: Project
+          Value: !Select [1, !Ref Tags]
+
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds: !Split [",", !Ref Subnets]
+      Tags:
+        - Key: Name
+          Value: RDS-SubnetGroup
+
+  RdsPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-RdsPassword"
+      Description: Auto-generated password for RDS
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\\'
+
+Outputs:
+  RdsEndpoint:
+    Description: RDS Endpoint
+    Value: !GetAtt RdsDBInstance.Endpoint.Address
+  RdsUsername:
+    Description: RDS Master Username
+    Value: "postgres"
+  RdsPassword:
+    Description: Secrets Manager ARN for the password
+    Value: !Ref RdsPasswordSecret
