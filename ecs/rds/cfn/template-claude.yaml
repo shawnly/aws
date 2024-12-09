@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for RDS PostgreSQL instance with configurable parameters'
+
+Parameters:
+  # VPC Configuration
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy the RDS instance into
+
+  # Subnet Group Configuration
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for RDS Subnet Group (select at least 2 in different Availability Zones)
+
+  # Database Configuration
+  DBInstanceClass:
+    Type: String
+    Default: db.m5.xlarge
+    AllowedValues:
+      - db.m5.xlarge
+      - db.m6.xlarge
+    Description: Database instance type
+
+  DBStorageSize:
+    Type: Number
+    Default: 200
+    AllowedValues:
+      - 200
+      - 400
+    Description: Storage size in GB
+
+  # Tagging
+  ProjectName:
+    Type: String
+    Description: Project name for tagging
+    Default: MyProject
+
+  EnvironmentType:
+    Type: String
+    Description: Environment type for tagging
+    AllowedValues:
+      - Development
+      - Staging
+      - Production
+    Default: Development
+
+Resources:
+  # Generate Random Password
+  DBPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\\'
+        RequireEachIncludedType:
+          - True
+        IncludeSpace: False
+        SecretStringTemplate: '{"username": "dbadmin"}'
+        GenerateStringKey: 'password'
+
+  # RDS Security Group
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL instance
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0  # Modify this to restrict access
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-RDS-SecurityGroup
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentType
+
+  # RDS Subnet Group
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets available for the RDS DB Instance
+      SubnetIds: !Ref SubnetIds
+
+  # RDS PostgreSQL Instance
+  PostgreSQLInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      EngineVersion: '12.22-R1'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBStorageSize
+      StorageType: gp2
+      MasterUsername: !Sub '{{resolve:secretsmanager:${DBPassword}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DBPassword}:SecretString:password}}'
+      VPCSecurityGroups: 
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      PubliclyAccessible: false
+      MultiAZ: true
+      DeletionProtection: true
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-PostgreSQL
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentType
+
+Outputs:
+  DBEndpoint:
+    Description: The connection endpoint for the database
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Address
+
+  DBPort:
+    Description: The port on which the database accepts connections
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Port
+
+  DBUsername:
+    Description: Database admin username
+    Value: !Sub '{{resolve:secretsmanager:${DBPassword}:SecretString:username}}'
+
+  DBSecretArn:
+    Description: ARN of the database secret in Secrets Manager
+    Value: !Ref DBPassword
