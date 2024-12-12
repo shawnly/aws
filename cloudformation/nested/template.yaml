@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Main Stack that includes CloudWatch Logs, ALB, and ECS Cluster
+
+Resources:
+  CloudWatchLogStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/your-bucket/cloudwatch-log-stack.yml
+      Parameters:
+        LogGroupName: my-app-log-group
+
+  ALBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/your-bucket/alb-stack.yml
+      Parameters:
+        VPCId: vpc-12345678
+        Subnets:
+          - subnet-11111111
+          - subnet-22222222
+
+  ECSClusterStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/your-bucket/ecs-cluster-stack.yml
+      Parameters:
+        ClusterName: my-app-cluster
+        ALBSecurityGroup: !GetAtt ALBStack.Outputs.ALBSecurityGroup
