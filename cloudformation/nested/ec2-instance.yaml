@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an EC2 instance in a specific VPC and private subnet.
+
+Parameters:
+  VpcId:
+    Description: The ID of the VPC where the EC2 instance will be created.
+    Type: String
+  SubnetId:
+    Description: The ID of the private subnet where the EC2 instance will be created.
+    Type: String
+  InstanceType:
+    Description: The EC2 instance type (e.g., t2.micro, t3.medium).
+    Type: String
+    Default: t2.micro
+  KeyName:
+    Description: The name of the EC2 KeyPair to enable SSH access to the instance.
+    Type: AWS::EC2::KeyPair::KeyName
+  SecurityGroupId:
+    Description: The ID of the security group to attach to the EC2 instance.
+    Type: String
+  AMIId:
+    Description: The ID of the AMI to use for the EC2 instance.
+    Type: String
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref SecurityGroupId
+      Tags:
+        - Key: Name
+          Value: EC2InPrivateSubnet
+
+Outputs:
+  InstanceId:
+    Description: The ID of the created EC2 instance.
+    Value: !Ref EC2Instance
+  PrivateIPAddress:
+    Description: The private IP address of the EC2 instance.
+    Value: !GetAtt EC2Instance.PrivateIp
+
+# aws cloudformation create-stack --stack-name EC2InPrivateSubnetStack \
+# --template-body file://ec2_private_subnet.yaml \
+# --parameters ParameterKey=VpcId,ParameterValue=<your-vpc-id> ParameterKey=SubnetId,ParameterValue=<your-subnet-id> ParameterKey=InstanceType,ParameterValue=<your-instance-type> ParameterKey=KeyName,ParameterValue=<your-key-name> ParameterKey=SecurityGroupId,ParameterValue=<your-security-group-id> ParameterKey=AMIId,ParameterValue=<your-ami-id>
