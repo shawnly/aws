@@ -1,0 +1,15 @@
+Subject: Meeting: Freddie 2.0 Deployment - Configuration Management Updates
+
+Agenda:
+Discuss the new configuration management approach for Freddie 2.0 deployment using parameter injection and address outstanding issues with missing actuator configuration.
+
+Background:
+To enhance security, the Freddie deployment process has removed configuration files from Docker images. This requires the application to read configuration data from the file system at runtime, increasing deployment complexity and incurring additional cloud costs for EFS (Elastic File System).
+
+To address these challenges, ETM has updated Freddie to use parameter injection, simplifying deployment. However, one critical parameter (actuator) is still missing. The Freddie team needs to add the actuator configuration to the application.yaml file.
+
+Objective:
+
+    Review the current status of Freddie's deployment updates.
+    Plan the next steps to resolve the missing actuator configuration.
+    Align on best practices for ECS/Kubernetes configuration management.
