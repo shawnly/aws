@@ -1,0 +1,9 @@
+project         = "your-project-name"
+environment     = "dev"
+event_id        = "unique-event-id"
+vpc_id          = "vpc-xxxxxxxx"
+vpc_cidr        = "10.0.0.0/16"
+private_subnets = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
+private_subnet_1 = "subnet-xxxxxxxx"
+domain_ec2_map  = "your-domain-map"
+ec2_number      = "001"
