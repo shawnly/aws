@@ -19,3 +19,4 @@ resource "aws_db_instance" "postgresql" {
 
   # ... other configurations
 }
+xxx  
