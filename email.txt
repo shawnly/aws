@@ -15,3 +15,14 @@ Objective:
     Align on best practices for ECS/Kubernetes configuration management.
 
     When you shared the diagram yesterday, it brought back memories and made me realize how quickly time flies (it’s been 3-4 years). I had thought this idea might have been set aside, but it’s great to see you bringing it back with fresh improvements. I’m excited about contributing more and working with you toward this meaningful goal."
+
+
+    I strongly support CloudFormation for our deployment use case due to the following reasons:
+
+Direct Integration with AWS: CloudFormation directly calls AWS APIs without introducing additional layers, unlike Terraform, which relies on its own intermediary APIs. This ensures faster adoption of AWS's evolving cloud services and avoids unnecessary complexity. Additionally, AWS CDK offers a flexible code-structured approach, which I have used successfully for the XSV project.
+
+State Management and UI: CloudFormation provides a free, built-in AWS Management Console for real-time deployment tracking and monitoring. In contrast, Terraform requires third-party tools or paid subscriptions for similar GUI functionality, making CloudFormation a more cost-effective choice for daily operations.
+
+AI-Driven Future: The future of Infrastructure-as-Code (IaC) will increasingly rely on AI-driven features such as predictive automation, optimal configurations, resource scaling, cost estimates, and error detection. AWS has already started integrating AI into its ecosystem to enhance CloudFormation’s capabilities. In contrast, Terraform faces limitations due to its reliance on local deployment states and conversion to AWS API calls before deployment. This architecture means Terraform lacks the centralized training data and computing power necessary for robust AI-driven enhancements.
+
+Conclusion: For our AWS-centric organization, CloudFormation offers unparalleled integration, cost efficiency, and future-proof AI capabilities, making it the ideal choice for our deployment needs.
