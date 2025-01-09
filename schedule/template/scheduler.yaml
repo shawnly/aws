@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for separate EC2 and RDS schedulers'
+
+Parameters:
+  EC2StartTime:
+    Type: String
+    Description: 'Cron expression for EC2 start time'
+    Default: 'cron(0 8 ? * MON-FRI *)'
+  
+  EC2StopTime:
+    Type: String
+    Description: 'Cron expression for EC2 stop time'
+    Default: 'cron(0 18 ? * MON-FRI *)'
+  
+  RDSStartTime:
+    Type: String
+    Description: 'Cron expression for RDS start time'
+    Default: 'cron(0 8 ? * MON-FRI *)'
+  
+  RDSStopTime:
+    Type: String
+    Description: 'Cron expression for RDS stop time'
+    Default: 'cron(0 18 ? * MON-FRI *)'
+  
+  TagKey:
+    Type: String
+    Description: 'Tag key to identify resources'
+    Default: 'scheduled'
+  
+  TagValue:
+    Type: String
+    Description: 'Tag value to identify resources'
+    Default: 'true'
+  
+  EventId:
+    Type: String
+    Description: 'Event identifier'
+    Default: '101'
+
+  EC2SchedulerRoleArn:
+    Type: String
+    Description: 'ARN of the EC2 Scheduler Lambda Role'
+
+  RDSSchedulerRoleArn:
+    Type: String
+    Description: 'ARN of the RDS Scheduler Lambda Role'
+
+Resources:
+  EC2SchedulerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !Ref EC2SchedulerRoleArn
+      Code:
+        ZipFile: !Sub |
+          # EC2 Lambda function code here
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 128
+
+  RDSSchedulerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !Ref RDSSchedulerRoleArn
+      Code:
+        ZipFile: !Sub |
+          # RDS Lambda function code here
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 128
+
+  EC2StartScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Start EC2 instances schedule'
+      ScheduleExpression: !Ref EC2StartTime
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EC2SchedulerLambda.Arn
+          Id: StartEC2InstancesTarget
+          Input: !Sub |
+            {
+              "action": "start",
+              "tag_key": "${TagKey}",
+              "tag_value": "${TagValue}",
+              "event_id": "${EventId}"
+            }
+
+  EC2StopScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Stop EC2 instances schedule'
+      ScheduleExpression: !Ref EC2StopTime
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EC2SchedulerLambda.Arn
+          Id: StopEC2InstancesTarget
+          Input: !Sub |
+            {
+              "action": "stop",
+              "tag_key": "${TagKey}",
+              "tag_value": "${TagValue}",
+              "event_id": "${EventId}"
+            }
+
+  RDSStartScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Start RDS instances schedule'
+      ScheduleExpression: !Ref RDSStartTime
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RDSSchedulerLambda.Arn
+          Id: StartRDSInstancesTarget
+          Input: !Sub |
+            {
+              "action": "start",
+              "tag_key": "${TagKey}",
+              "tag_value": "${TagValue}",
+              "event_id": "${EventId}"
+            }
+
+  RDSStopScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Stop RDS instances schedule'
+      ScheduleExpression: !Ref RDSStopTime
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RDSSchedulerLambda.Arn
+          Id: StopRDSInstancesTarget
+          Input: !Sub |
+            {
+              "action": "stop",
+              "tag_key": "${TagKey}",
+              "tag_value": "${TagValue}",
+              "event_id": "${EventId}"
+            }
+
+  EC2StartLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EC2SchedulerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EC2StartScheduleRule.Arn
+
+  EC2StopLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EC2SchedulerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EC2StopScheduleRule.Arn
+
+  RDSStartLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RDSSchedulerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RDSStartScheduleRule.Arn
+
+  RDSStopLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RDSSchedulerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RDSStopScheduleRule.Arn
+
+Outputs:
+  EC2LambdaArn:
+    Description: 'ARN of the EC2 Lambda function'
+    Value: !GetAtt EC2SchedulerLambda.Arn
+  RDSLambdaArn:
+    Description: 'ARN of the RDS Lambda function'
+    Value: !GetAtt RDSSchedulerLambda.Arn

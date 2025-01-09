@@ -1,0 +1,62 @@
+import boto3
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+def get_tagged_rds_instances(tag_key, tag_value, event_id):
+    rds = boto3.client('rds')
+    instances = []
+    
+    # Get RDS instances with matching tags
+    response = rds.describe_db_instances()
+    for instance in response['DBInstances']:
+        tags = rds.list_tags_for_resource(ResourceName=instance['DBInstanceArn'])['TagList']
+        if any(t['Key'] == tag_key and t['Value'] == tag_value for t in tags) and \
+           any(t['Key'] == 'event' and t['Value'] == event_id for t in tags):
+            instances.append(instance['DBInstanceIdentifier'])
+    
+    return instances
+
+def start_instances(instance_ids):
+    if not instance_ids:
+        logger.info("No RDS instances to start")
+        return
+        
+    rds = boto3.client('rds')
+    for instance_id in instance_ids:
+        rds.start_db_instance(DBInstanceIdentifier=instance_id)
+        logger.info(f"Started RDS instance: {instance_id}")
+
+def stop_instances(instance_ids):
+    if not instance_ids:
+        logger.info("No RDS instances to stop")
+        return
+        
+    rds = boto3.client('rds')
+    for instance_id in instance_ids:
+        rds.stop_db_instance(DBInstanceIdentifier=instance_id)
+        logger.info(f"Stopped RDS instance: {instance_id}")
+
+def lambda_handler(event, context):
+    action = event['action']  # 'start' or 'stop'
+    tag_key = event['tag_key']  # 'scheduled'
+    tag_value = event['tag_value']  # 'true'
+    event_id = event['event_id']  # '101'
+    
+    try:
+        instance_ids = get_tagged_rds_instances(tag_key, tag_value, event_id)
+        
+        if action == 'start':
+            start_instances(instance_ids)
+        elif action == 'stop':
+            stop_instances(instance_ids)
+        
+        return {
+            'statusCode': 200,
+            'body': f"Successfully {action}ed RDS instances"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        raise e
