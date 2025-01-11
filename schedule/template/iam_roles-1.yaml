@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM Role for Instance Scheduler Lambda Function'
+
+Resources:
+  InstanceSchedulerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - scheduler.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: InstanceSchedulerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:StartInstances'
+                  - 'ec2:StopInstances'
+                  - 'rds:DescribeDBInstances'
+                  - 'rds:StartDBInstance'
+                  - 'rds:StopDBInstance'
+                  - 'rds:ListTagsForResource'
+                Resource: '*'
+
+Outputs:
+  RoleArn:
+    Description: ARN of the Instance Scheduler Role
+    Value: !GetAtt InstanceSchedulerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"
