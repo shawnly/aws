@@ -43,6 +43,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
       Policies:
         - PolicyName: S3Access
           PolicyDocument:
@@ -199,7 +200,12 @@ Resources:
                   - ec2:CreateTags
                   - ec2:DescribeInstances
                   - ec2:DescribeLaunchTemplates
+                  - ec2:DescribeInstanceStatus
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt EC2Role.Arn
         - PolicyName: CodeBuildAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -271,6 +277,9 @@ Resources:
       Artifacts:
         Type: S3
         Location: !Ref ArtifactBucket
+        Name: build-output
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
@@ -285,12 +294,16 @@ Resources:
               commands:
                 - echo "Build started on `date`"
                 - echo "Running build job ${CODEBUILD_BUILD_ID}"
+                - # Create a test file
+                - mkdir -p build
+                - echo "Test build output" > build/test.txt
                 - # Simulate work
                 - sleep 300
                 - echo "Build completed on `date`"
           artifacts:
             files:
-              - '**/*'
+              - build/**/*
+            base-directory: .
       Cache:
         Type: NO_CACHE
       TimeoutInMinutes: 30
