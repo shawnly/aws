@@ -95,6 +95,7 @@ Resources:
           
           ec2 = boto3.client('ec2')
           codebuild = boto3.client('codebuild')
+          sqs = boto3.client('sqs')
           
           def handler(event, context):
               print(f"Received event: {json.dumps(event)}")
@@ -104,27 +105,68 @@ Resources:
                   status = event['detail']['build-status']
                   
                   if status == 'IN_PROGRESS':
-                      launch_instance(build_id)
+                      handle_new_build(build_id)
                   elif status in ['SUCCEEDED', 'FAILED', 'STOPPED']:
-                      terminate_instance(build_id)
-          
-          def launch_instance(build_id):
-              launch_template_id = os.environ['LAUNCH_TEMPLATE_ID']
-              subnet_ids = os.environ['SUBNET_IDS'].split(',')
-              max_instances = int(os.environ['MAX_INSTANCES'])
-              
-              # Check current instance count
+                      handle_completed_build(build_id)
+
+          def get_running_instances():
               instances = ec2.describe_instances(
                   Filters=[
                       {'Name': 'tag:Purpose', 'Values': ['CodeBuild']},
                       {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
                   ]
               )
+              return sum(len(r['Instances']) for r in instances['Reservations'])
+
+          def handle_new_build(build_id):
+              max_instances = int(os.environ['MAX_INSTANCES'])
+              current_count = get_running_instances()
               
-              current_count = sum(len(r['Instances']) for r in instances['Reservations'])
               if current_count >= max_instances:
-                  print(f"Maximum instance limit ({max_instances}) reached")
-                  return
+                  print(f"Maximum instance limit ({max_instances}) reached. Queuing build {build_id}")
+                  # Queue the build ID
+                  sqs.send_message(
+                      QueueUrl=os.environ['QUEUE_URL'],
+                      MessageBody=json.dumps({
+                          'build_id': build_id,
+                          'timestamp': time.time()
+                      })
+                  )
+              else:
+                  launch_instance(build_id)
+
+          def handle_completed_build(build_id):
+              # First, terminate the instance for the completed build
+              terminate_instance(build_id)
+              
+              # Then check if there are any queued builds
+              try:
+                  response = sqs.receive_message(
+                      QueueUrl=os.environ['QUEUE_URL'],
+                      MaxNumberOfMessages=1,
+                      WaitTimeSeconds=1
+                  )
+                  
+                  if 'Messages' in response:
+                      message = response['Messages'][0]
+                      receipt_handle = message['ReceiptHandle']
+                      queued_build = json.loads(message['Body'])
+                      
+                      # Delete the message from the queue
+                      sqs.delete_message(
+                          QueueUrl=os.environ['QUEUE_URL'],
+                          ReceiptHandle=receipt_handle
+                      )
+                      
+                      # Launch instance for the queued build
+                      launch_instance(queued_build['build_id'])
+                      
+              except Exception as e:
+                  print(f"Error processing queued build: {str(e)}")
+          
+          def launch_instance(build_id):
+              launch_template_id = os.environ['LAUNCH_TEMPLATE_ID']
+              subnet_ids = os.environ['SUBNET_IDS'].split(',')
               
               try:
                   response = ec2.run_instances(
@@ -206,7 +248,17 @@ Resources:
                 Action:
                   - iam:PassRole
                 Resource: !GetAtt EC2Role.Arn
-        - PolicyName: CodeBuildAccess
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt BuildQueue.Arn
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -277,6 +329,9 @@ Resources:
       Artifacts:
         Type: S3
         Location: !Ref ArtifactBucket
+        Name: build-output
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
@@ -291,12 +346,16 @@ Resources:
               commands:
                 - echo "Build started on `date`"
                 - echo "Running build job ${CODEBUILD_BUILD_ID}"
+                - # Create a test file
+                - mkdir -p build
+                - echo "Test build output" > build/test.txt
                 - # Simulate work
                 - sleep 300
                 - echo "Build completed on `date`"
           artifacts:
             files:
-              - '**/*'
+              - build/**/*
+            base-directory: .
       Cache:
         Type: NO_CACHE
       TimeoutInMinutes: 30
