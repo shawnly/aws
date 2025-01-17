@@ -1,0 +1,601 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild with EC2 workers and test jobs'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the resources will be created
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the EC2 instances
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type for build workers
+
+  MaxInstances:
+    Type: Number
+    Default: 10
+    Description: Maximum number of EC2 instances
+
+Resources:
+  # DynamoDB table for instance counting
+  InstanceCounterTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-instance-counter
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: counter_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: counter_id
+          KeyType: HASH
+
+  # S3 Bucket for build artifacts
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  # IAM Role for EC2 instances
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub ${ArtifactBucket.Arn}/*
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: EC2Role
+
+  # Security Group for EC2 instances
+  BuilderSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for CodeBuild EC2 workers
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  # Lambda Function for EC2 Management
+  BuildManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      Timeout: 300
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          import time
+          from botocore.exceptions import ClientError
+          
+          ec2 = boto3.client('ec2')
+          codebuild = boto3.client('codebuild')
+          sqs = boto3.client('sqs')
+          dynamodb = boto3.client('dynamodb')
+          
+          def handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+              
+              if event['detail-type'] == 'CodeBuild Build State Change':
+                  build_id = event['detail']['build-id']
+                  status = event['detail']['build-status']
+                  
+                  if status == 'IN_PROGRESS':
+                      handle_new_build(build_id)
+                  elif status in ['SUCCEEDED', 'FAILED', 'STOPPED']:
+                      handle_completed_build(build_id)
+          
+          def get_and_increment_instance_count():
+              """
+              Atomically get and increment the instance count using DynamoDB
+              """
+              try:
+                  response = dynamodb.update_item(
+                      TableName=os.environ['COUNTER_TABLE'],
+                      Key={'counter_id': {'S': 'instance_count'}},
+                      UpdateExpression='ADD instance_count :inc',
+                      ExpressionAttributeValues={':inc': {'N': '1'}},
+                      ReturnValues='UPDATED_OLD'
+                  )
+                  current_count = int(response['Attributes']['instance_count']['N'])
+                  print(f"Current instance count: {current_count}")
+                  return current_count
+              except ClientError as e:
+                  if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                      try:
+                          # Initialize counter if it doesn't exist
+                          dynamodb.put_item(
+                              TableName=os.environ['COUNTER_TABLE'],
+                              Item={
+                                  'counter_id': {'S': 'instance_count'},
+                                  'instance_count': {'N': '1'}
+                              }
+                          )
+                          return 0
+                      except Exception as init_error:
+                          print(f"Error initializing counter: {str(init_error)}")
+                          raise init_error
+                  print(f"Error updating instance count: {str(e)}")
+                  raise e
+              except Exception as e:
+                  print(f"Unexpected error in get_and_increment_instance_count: {str(e)}")
+                  raise e
+          
+          def decrement_instance_count():
+              """
+              Atomically decrement the instance count
+              """
+              try:
+                  response = dynamodb.update_item(
+                      TableName=os.environ['COUNTER_TABLE'],
+                      Key={'counter_id': {'S': 'instance_count'}},
+                      UpdateExpression='ADD instance_count :dec',
+                      ExpressionAttributeValues={':dec': {'N': '-1'}},
+                      ReturnValues='UPDATED_NEW'
+                  )
+                  new_count = int(response['Attributes']['instance_count']['N'])
+                  print(f"Decremented instance count. New count: {new_count}")
+              except Exception as e:
+                  print(f"Error decrementing instance count: {str(e)}")
+                  raise e
+          
+          def handle_new_build(build_id):
+              max_instances = int(os.environ['MAX_INSTANCES'])
+              try:
+                  current_count = get_and_increment_instance_count()
+                  
+                  if current_count >= max_instances:
+                      print(f"Maximum instance limit ({max_instances}) reached. Queuing build {build_id}")
+                      # Decrement the counter since we're not actually launching an instance
+                      decrement_instance_count()
+                      # Queue the build ID
+                      sqs.send_message(
+                          QueueUrl=os.environ['QUEUE_URL'],
+                          MessageBody=json.dumps({
+                              'build_id': build_id,
+                              'timestamp': time.time()
+                          })
+                      )
+                  else:
+                      try:
+                          launch_instance(build_id)
+                      except Exception as e:
+                          # If instance launch fails, decrement the counter
+                          decrement_instance_count()
+                          raise e
+              except Exception as e:
+                  print(f"Error in handle_new_build: {str(e)}")
+                  raise e
+          
+          def handle_completed_build(build_id):
+              try:
+                  # First, terminate the instance for the completed build
+                  terminate_instance(build_id)
+                  
+                  # Decrement the instance count
+                  decrement_instance_count()
+                  
+                  # Then check if there are any queued builds
+                  response = sqs.receive_message(
+                      QueueUrl=os.environ['QUEUE_URL'],
+                      MaxNumberOfMessages=1,
+                      WaitTimeSeconds=1
+                  )
+                  
+                  if 'Messages' in response:
+                      message = response['Messages'][0]
+                      receipt_handle = message['ReceiptHandle']
+                      queued_build = json.loads(message['Body'])
+                      
+                      try:
+                          # Delete the message from the queue first
+                          sqs.delete_message(
+                              QueueUrl=os.environ['QUEUE_URL'],
+                              ReceiptHandle=receipt_handle
+                          )
+                          
+                          # Increment counter for new instance
+                          current_count = get_and_increment_instance_count()
+                          max_instances = int(os.environ['MAX_INSTANCES'])
+                          
+                          if current_count < max_instances:
+                              # Launch instance for the queued build
+                              launch_instance(queued_build['build_id'])
+                          else:
+                              # If we somehow exceed max instances, requeue the message
+                              decrement_instance_count()
+                              sqs.send_message(
+                                  QueueUrl=os.environ['QUEUE_URL'],
+                                  MessageBody=json.dumps(queued_build)
+                              )
+                      except Exception as e:
+                          print(f"Error processing queued message: {str(e)}")
+                          # Requeue the message if processing failed
+                          sqs.send_message(
+                              QueueUrl=os.environ['QUEUE_URL'],
+                              MessageBody=json.dumps(queued_build)
+                          )
+                          raise e
+                          
+              except Exception as e:
+                  print(f"Error in handle_completed_build: {str(e)}")
+                  raise e
+          
+          def launch_instance(build_id):
+              launch_template_id = os.environ['LAUNCH_TEMPLATE_ID']
+              subnet_ids = os.environ['SUBNET_IDS'].split(',')
+              
+              try:
+                  response = ec2.run_instances(
+                      LaunchTemplate={
+                          'LaunchTemplateId': launch_template_id,
+                          'Version': '$Latest'
+                      },
+                      MinCount=1,
+                      MaxCount=1,
+                      SubnetId=subnet_ids[0]
+                  )
+                  
+                  instance_id = response['Instances'][0]['InstanceId']
+                  print(f"Launched instance {instance_id} for build {build_id}")
+                  
+                  ec2.create_tags(
+                      Resources=[instance_id],
+                      Tags=[
+                          {'Key': 'Purpose', 'Value': 'CodeBuild'},
+                          {'Key': 'BuildId', 'Value': build_id},
+                          {'Key': 'AutoTerminate', 'Value': 'true'}
+                      ]
+                  )
+              except Exception as e:
+                  print(f"Error launching instance: {str(e)}")
+                  raise e
+          
+          def terminate_instance(build_id):
+              try:
+                  instances = ec2.describe_instances(
+                      Filters=[
+                          {'Name': 'tag:BuildId', 'Values': [build_id]},
+                          {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
+                      ]
+                  )
+                  
+                  for reservation in instances['Reservations']:
+                      for instance in reservation['Instances']:
+                          instance_id = instance['InstanceId']
+                          print(f"Terminating instance {instance_id} for build {build_id}")
+                          ec2.terminate_instances(InstanceIds=[instance_id])
+                          
+              except Exception as e:
+                  print(f"Error terminating instance: {str(e)}")
+                  raise e
+
+      Environment:
+        Variables:
+          LAUNCH_TEMPLATE_ID: !Ref BuilderLaunchTemplate
+          SUBNET_IDS: !Join [',', !Ref SubnetIds]
+          MAX_INSTANCES: !Ref MaxInstances
+          COUNTER_TABLE: !Ref InstanceCounterTable
+          QUEUE_URL: !Ref BuildQueue
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2Management
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:TerminateInstances
+                  - ec2:CreateTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeLaunchTemplates
+                  - ec2:DescribeInstanceStatus
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt EC2Role.Arn
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt BuildQueue.Arn
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt InstanceCounterTable.Arn
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                Resource: '*'
+
+  # EventBridge Rule
+  BuildEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Monitor CodeBuild state changes"
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        detail:
+          build-status:
+            - IN_PROGRESS
+            - SUCCEEDED
+            - FAILED
+            - STOPPED
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BuildManagerFunction.Arn
+          Id: BuildManagerFunction
+
+  BuildEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BuildManagerFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BuildEventRule.Arn
+
+  # Launch Template
+  BuilderLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2 AMI ID (replace with your region's AMI)
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds: 
+          - !Ref BuilderSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y aws-cli docker git
+            service docker start
+            usermod -a -G docker ec2-user
+            
+            # Install CodeBuild agent
+            wget https://aws-codebuild-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/codebuild-agent.tar
+            tar -xf codebuild-agent.tar
+            ./install
+
+  # CodeBuild Project
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AWS::StackName}-build-project
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref ArtifactBucket
+        Name: build-output
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        PrivilegedMode: true
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Build started on `date`"
+                - echo "Running build job ${CODEBUILD_BUILD_ID}"
+                - # Create a test file
+                - mkdir -p build
+                - echo "Test build output" > build/test.txt
+                - # Simulate work
+                - sleep 300
+                - echo "Build completed on `date`"
+          artifacts:
+            files:
+              - build/**/*
+            base-directory: .
+      Cache:
+        Type: NO_CACHE
+      TimeoutInMinutes: 30
+
+  # SQS Queue for managing build jobs
+  BuildQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900  # 15 minutes
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BuildQueueDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Purpose
+          Value: CodeBuild-Job-Management
+
+  # Dead Letter Queue for failed messages
+  BuildQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Purpose
+          Value: CodeBuild-Job-Management-DLQ
+
+  # SQS Queue Policy
+  BuildQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: 
+        - !Ref BuildQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+            Resource: !GetAtt BuildQueue.Arn
+
+  # DLQ Queue Policy
+  BuildQueueDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: 
+        - !Ref BuildQueueDLQ
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+            Resource: !GetAtt BuildQueueDLQ.Arn
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildServicePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource: 
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-build-project'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-build-project:*'
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+              - Effect: Allow
+                Resource: 
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}'
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}/*'
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeDhcpOptions
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                  - ec2:CreateNetworkInterfacePermission
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+
+Outputs:
+  BuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref BuildProject
+
+  ArtifactBucketName:
+    Description: Name of the S3 bucket for build artifacts
+    Value: !Ref ArtifactBucket
+
+  BuildQueueUrl:
+    Description: URL of the SQS queue for build job management
+    Value: !Ref BuildQueue
+
+  BuildQueueDLQUrl:
+    Description: URL of the Dead Letter Queue
+    Value: !Ref BuildQueueDLQ
