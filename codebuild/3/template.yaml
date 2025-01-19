@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild with Lambda compute for build jobs'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the resources will be created
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the Lambda functions
+
+Resources:
+  # S3 Bucket for build artifacts
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  # Lambda Function for Build Processing
+  BuildProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      Timeout: 900  # 15 minutes maximum
+      MemorySize: 3008  # Maximum memory for Lambda
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds: 
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !Ref SubnetIds
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          
+          codebuild = boto3.client('codebuild')
+          
+          def handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+              
+              if event['detail-type'] == 'CodeBuild Build State Change':
+                  build_id = event['detail']['build-id']
+                  status = event['detail']['build-status']
+                  
+                  if status == 'IN_PROGRESS':
+                      process_build(build_id)
+          
+          def process_build(build_id):
+              try:
+                  # Get build details
+                  response = codebuild.batch_get_builds(ids=[build_id])
+                  if not response['builds']:
+                      print(f"No build found with ID: {build_id}")
+                      return
+                  
+                  build = response['builds'][0]
+                  print(f"Processing build {build_id}")
+                  
+                  # Add your build processing logic here
+                  # This could include running tests, compiling code, etc.
+                  
+              except Exception as e:
+                  print(f"Error processing build: {str(e)}")
+                  raise
+
+  # Security Group for Lambda
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:StopBuild
+                Resource: '*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub ${ArtifactBucket.Arn}/*
+
+  # EventBridge Rule
+  BuildEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Monitor CodeBuild state changes"
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        detail:
+          build-status:
+            - IN_PROGRESS
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BuildProcessorFunction.Arn
+          Id: BuildProcessorFunction
+
+  BuildEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BuildProcessorFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BuildEventRule.Arn
+
+  # CodeBuild Project
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AWS::StackName}-lambda-build
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref ArtifactBucket
+        Name: build-output
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
+      Environment:
+        Type: LAMBDA
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:4.0
+        ComputeType: BUILD_LAMBDA_3GB
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Build started on `date`"
+                - echo "Running build job ${CODEBUILD_BUILD_ID}"
+                - mkdir -p build
+                - echo "Test build output" > build/test.txt
+                - echo "Build completed on `date`"
+          artifacts:
+            files:
+              - build/**/*
+            base-directory: .
+      Cache:
+        Type: NO_CACHE
+      TimeoutInMinutes: 15  # Maximum Lambda execution time
+
+  # CodeBuild Service Role
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildServicePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource: 
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-lambda-build'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-lambda-build:*'
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+              - Effect: Allow
+                Resource: 
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}'
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}/*'
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+
+Outputs:
+  BuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref BuildProject
+
+  ArtifactBucketName:
+    Description: Name of the S3 bucket for build artifacts
+    Value: !Ref ArtifactBucket
