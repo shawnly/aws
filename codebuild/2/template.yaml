@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EventBridge rule for CodeBuild failures with Lambda handler'
+
+Resources:
+  # Lambda Function
+  CodeBuildFailureFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: codebuild-failure-handler
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          
+          def lambda_handler(event, context):
+              print("Received CodeBuild failure event:")
+              print(json.dumps(event, indent=2))
+              
+              # Extract useful information from the event
+              build_info = event['detail']
+              project_name = build_info['project-name']
+              build_status = build_info['build-status']
+              build_id = build_info['build-id']
+              
+              print(f"Project: {project_name}")
+              print(f"Build ID: {build_id}")
+              print(f"Status: {build_status}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Successfully processed CodeBuild failure event')
+              }
+      Timeout: 30
+      MemorySize: 128
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # EventBridge Rule
+  CodeBuildFailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: codebuild-failure-rule
+      Description: "Captures CodeBuild job failures"
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        detail:
+          build-status:
+            - FAILED
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CodeBuildFailureFunction.Arn
+          Id: "ProcessCodeBuildFailure"
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CodeBuildFailureFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CodeBuildFailureRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !GetAtt CodeBuildFailureFunction.Arn
+  EventRuleArn:
+    Description: "ARN of the EventBridge rule"
+    Value: !GetAtt CodeBuildFailureRule.Arn
