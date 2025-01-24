@@ -71,6 +71,6 @@ project_name=$(aws cloudformation describe-stacks \
 # Create webhook using AWS CLI
 aws codebuild create-webhook \
     --project-name $project_name \
-    --filter-groups "[[{\"type\":\"EVENT\",\"pattern\":\"PUSH\"}]]"
+    --filter-groups "[[{\"type\":\"EVENT\",\"pattern\":\"WORKFLOW_JOB_QUEUE\"},{\"type\":\"HEAD_REF\",\"pattern\":\"refs/heads/main\"}]]"
 
 echo "Webhook created for project: $project_name"
