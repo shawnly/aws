@@ -21,6 +21,19 @@ Parameters:
     Description: Maximum number of EC2 instances
 
 Resources:
+  # DynamoDB table for instance counting
+  InstanceCounterTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-instance-counter
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: counter_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: counter_id
+          KeyType: HASH
+
   # S3 Bucket for build artifacts
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -92,10 +105,12 @@ Resources:
           import os
           import json
           import time
+          from botocore.exceptions import ClientError
           
           ec2 = boto3.client('ec2')
           codebuild = boto3.client('codebuild')
           sqs = boto3.client('sqs')
+          dynamodb = boto3.client('dynamodb')
           
           def handler(event, context):
               print(f"Received event: {json.dumps(event)}")
@@ -108,39 +123,98 @@ Resources:
                       handle_new_build(build_id)
                   elif status in ['SUCCEEDED', 'FAILED', 'STOPPED']:
                       handle_completed_build(build_id)
-
-          def get_running_instances():
-              instances = ec2.describe_instances(
-                  Filters=[
-                      {'Name': 'tag:Purpose', 'Values': ['CodeBuild']},
-                      {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
-                  ]
-              )
-              return sum(len(r['Instances']) for r in instances['Reservations'])
-
+          
+          def get_and_increment_instance_count():
+              """
+              Atomically get and increment the instance count using DynamoDB
+              """
+              try:
+                  response = dynamodb.update_item(
+                      TableName=os.environ['COUNTER_TABLE'],
+                      Key={'counter_id': {'S': 'instance_count'}},
+                      UpdateExpression='ADD instance_count :inc',
+                      ExpressionAttributeValues={':inc': {'N': '1'}},
+                      ReturnValues='UPDATED_OLD'
+                  )
+                  current_count = int(response['Attributes']['instance_count']['N'])
+                  print(f"Current instance count: {current_count}")
+                  return current_count
+              except ClientError as e:
+                  if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                      try:
+                          # Initialize counter if it doesn't exist
+                          dynamodb.put_item(
+                              TableName=os.environ['COUNTER_TABLE'],
+                              Item={
+                                  'counter_id': {'S': 'instance_count'},
+                                  'instance_count': {'N': '1'}
+                              }
+                          )
+                          return 0
+                      except Exception as init_error:
+                          print(f"Error initializing counter: {str(init_error)}")
+                          raise init_error
+                  print(f"Error updating instance count: {str(e)}")
+                  raise e
+              except Exception as e:
+                  print(f"Unexpected error in get_and_increment_instance_count: {str(e)}")
+                  raise e
+          
+          def decrement_instance_count():
+              """
+              Atomically decrement the instance count
+              """
+              try:
+                  response = dynamodb.update_item(
+                      TableName=os.environ['COUNTER_TABLE'],
+                      Key={'counter_id': {'S': 'instance_count'}},
+                      UpdateExpression='ADD instance_count :dec',
+                      ExpressionAttributeValues={':dec': {'N': '-1'}},
+                      ReturnValues='UPDATED_NEW'
+                  )
+                  new_count = int(response['Attributes']['instance_count']['N'])
+                  print(f"Decremented instance count. New count: {new_count}")
+              except Exception as e:
+                  print(f"Error decrementing instance count: {str(e)}")
+                  raise e
+          
           def handle_new_build(build_id):
               max_instances = int(os.environ['MAX_INSTANCES'])
-              current_count = get_running_instances()
-              
-              if current_count >= max_instances:
-                  print(f"Maximum instance limit ({max_instances}) reached. Queuing build {build_id}")
-                  # Queue the build ID
-                  sqs.send_message(
-                      QueueUrl=os.environ['QUEUE_URL'],
-                      MessageBody=json.dumps({
-                          'build_id': build_id,
-                          'timestamp': time.time()
-                      })
-                  )
-              else:
-                  launch_instance(build_id)
-
-          def handle_completed_build(build_id):
-              # First, terminate the instance for the completed build
-              terminate_instance(build_id)
-              
-              # Then check if there are any queued builds
               try:
+                  current_count = get_and_increment_instance_count()
+                  
+                  if current_count >= max_instances:
+                      print(f"Maximum instance limit ({max_instances}) reached. Queuing build {build_id}")
+                      # Decrement the counter since we're not actually launching an instance
+                      decrement_instance_count()
+                      # Queue the build ID
+                      sqs.send_message(
+                          QueueUrl=os.environ['QUEUE_URL'],
+                          MessageBody=json.dumps({
+                              'build_id': build_id,
+                              'timestamp': time.time()
+                          })
+                      )
+                  else:
+                      try:
+                          launch_instance(build_id)
+                      except Exception as e:
+                          # If instance launch fails, decrement the counter
+                          decrement_instance_count()
+                          raise e
+              except Exception as e:
+                  print(f"Error in handle_new_build: {str(e)}")
+                  raise e
+          
+          def handle_completed_build(build_id):
+              try:
+                  # First, terminate the instance for the completed build
+                  terminate_instance(build_id)
+                  
+                  # Decrement the instance count
+                  decrement_instance_count()
+                  
+                  # Then check if there are any queued builds
                   response = sqs.receive_message(
                       QueueUrl=os.environ['QUEUE_URL'],
                       MaxNumberOfMessages=1,
@@ -152,17 +226,39 @@ Resources:
                       receipt_handle = message['ReceiptHandle']
                       queued_build = json.loads(message['Body'])
                       
-                      # Delete the message from the queue
-                      sqs.delete_message(
-                          QueueUrl=os.environ['QUEUE_URL'],
-                          ReceiptHandle=receipt_handle
-                      )
-                      
-                      # Launch instance for the queued build
-                      launch_instance(queued_build['build_id'])
-                      
+                      try:
+                          # Delete the message from the queue first
+                          sqs.delete_message(
+                              QueueUrl=os.environ['QUEUE_URL'],
+                              ReceiptHandle=receipt_handle
+                          )
+                          
+                          # Increment counter for new instance
+                          current_count = get_and_increment_instance_count()
+                          max_instances = int(os.environ['MAX_INSTANCES'])
+                          
+                          if current_count < max_instances:
+                              # Launch instance for the queued build
+                              launch_instance(queued_build['build_id'])
+                          else:
+                              # If we somehow exceed max instances, requeue the message
+                              decrement_instance_count()
+                              sqs.send_message(
+                                  QueueUrl=os.environ['QUEUE_URL'],
+                                  MessageBody=json.dumps(queued_build)
+                              )
+                      except Exception as e:
+                          print(f"Error processing queued message: {str(e)}")
+                          # Requeue the message if processing failed
+                          sqs.send_message(
+                              QueueUrl=os.environ['QUEUE_URL'],
+                              MessageBody=json.dumps(queued_build)
+                          )
+                          raise e
+                          
               except Exception as e:
-                  print(f"Error processing queued build: {str(e)}")
+                  print(f"Error in handle_completed_build: {str(e)}")
+                  raise e
           
           def launch_instance(build_id):
               launch_template_id = os.environ['LAUNCH_TEMPLATE_ID']
@@ -192,6 +288,7 @@ Resources:
                   )
               except Exception as e:
                   print(f"Error launching instance: {str(e)}")
+                  raise e
           
           def terminate_instance(build_id):
               try:
@@ -210,12 +307,15 @@ Resources:
                           
               except Exception as e:
                   print(f"Error terminating instance: {str(e)}")
+                  raise e
 
       Environment:
         Variables:
           LAUNCH_TEMPLATE_ID: !Ref BuilderLaunchTemplate
           SUBNET_IDS: !Join [',', !Ref SubnetIds]
           MAX_INSTANCES: !Ref MaxInstances
+          COUNTER_TABLE: !Ref InstanceCounterTable
+          QUEUE_URL: !Ref BuildQueue
 
   # IAM Role for Lambda
   LambdaExecutionRole:
@@ -259,6 +359,20 @@ Resources:
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt BuildQueue.Arn
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt InstanceCounterTable.Arn
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
               - Effect: Allow
                 Action:
                   - codebuild:BatchGetBuilds

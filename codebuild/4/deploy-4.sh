@@ -68,16 +68,23 @@ project_name=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ProjectName`].OutputValue' \
     --output text)
 
-# Create webhook using AWS CLI
-aws codebuild create-webhook \
-    --project-name $project_name \
-    --filter-groups '[
-      [
-        {
-          "type": "EVENT",
-          "pattern": "PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED, PULL_REQUEST_REOPENED, PUSH"
-        }
-      ]
-    ]'
+# Check if webhook already exists
+webhook_exists=$(aws codebuild batch-get-projects --names $project_name \
+    --query 'projects[0].webhook.url' --output text)
 
-echo "Webhook created for project: $project_name"
+if [ "$webhook_exists" == "None" ]; then
+    # Create webhook only if it doesn't exist
+    aws codebuild create-webhook \
+        --project-name $project_name \
+        --filter-groups '[
+          [
+            {
+              "type": "EVENT",
+              "pattern": "PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED, PULL_REQUEST_REOPENED, PUSH"
+            }
+          ]
+        ]'
+    echo "Webhook created for project: $project_name"
+else
+    echo "Webhook already exists for project: $project_name"
+fi
