@@ -32,7 +32,8 @@ validate_env() {
 # Default values
 size="small"
 event_id=101
-webhook_output="webhook_info.txt"
+# Get webhook output path from env.sh or use default
+webhook_output=${WEBHOOK_OUTPUT_PATH:-"webhook_info.txt"}
 
 # Source environment variables
 if [ -f "env.sh" ]; then
@@ -111,14 +112,24 @@ if [ "$webhook_exists" == "None" ]; then
           ]
         ]')
     
+    # Check if webhook_output is a directory
+    if [ -d "$webhook_output" ]; then
+        webhook_output="${webhook_output}/webhook_info.txt"
+    fi
+    
+    # Create directory if it doesn't exist
+    mkdir -p "$(dirname "$webhook_output")"
+    
     # Extract and save webhook details
-    echo "GitHub Webhook Information" > $webhook_output
-    echo "------------------------" >> $webhook_output
-    echo "Project: $project_name" >> $webhook_output
-    echo "Repository: $GITHUB_REPO_URL" >> $webhook_output
-    echo "Payload URL: $(echo $webhook_info | jq -r '.webhook.payloadUrl')" >> $webhook_output
-    echo "Secret: $(echo $webhook_info | jq -r '.webhook.secret')" >> $webhook_output
-    echo "Created Date: $(date)" >> $webhook_output
+    {
+        echo "GitHub Webhook Information"
+        echo "------------------------"
+        echo "Project: $project_name"
+        echo "Repository: $GITHUB_REPO_URL"
+        echo "Payload URL: $(echo $webhook_info | jq -r '.webhook.payloadUrl')"
+        echo "Secret: $(echo $webhook_info | jq -r '.webhook.secret')"
+        echo "Created Date: $(date)"
+    } > "$webhook_output"
     
     echo "Webhook created for project: $project_name"
     echo "Webhook details saved to: $webhook_output"
