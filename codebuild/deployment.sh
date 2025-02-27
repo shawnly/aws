@@ -29,6 +29,11 @@ usage() {
 }
 
 # Parse command line arguments
+if [ $# -eq 0 ]; then
+  # No arguments provided, show usage
+  usage
+fi
+
 while getopts "o:s:e:r:t:g:h" opt; do
   case $opt in
     o) ORGANIZATION="$OPTARG" ;;
