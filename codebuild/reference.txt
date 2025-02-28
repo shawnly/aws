@@ -1,0 +1,4 @@
+https://docs.aws.amazon.com/codebuild/latest/userguide/github-global-organization-webhook-setup.html
+https://docs.aws.amazon.com/codebuild/latest/userguide/access-tokens-github.html
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-codebuild-project-source.html
+
