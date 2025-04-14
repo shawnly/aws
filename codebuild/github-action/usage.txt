@@ -1,0 +1,117 @@
+# Generic CodeBuild Workflow Usage Guide
+
+This guide explains how to use the generic GitHub Actions workflow that runs on AWS CodeBuild with configurable parameters.
+
+## Setup Instructions
+
+1. Add the following files to your repository:
+   - `.github/workflows/generic-codebuild.yml` - The reusable workflow
+   - `.github/workflows/project-build-pipeline.yml` - Your caller workflow (example provided)
+
+2. Configure your AWS CodeBuild environment to support the GitHub Actions runner.
+
+## Available Parameters
+
+The generic workflow supports the following parameters:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `java_version` | Java version to use (8, 11, 17, 21) | `17` |
+| `instance_size` | Size of the CodeBuild instance (small, medium, large) | `small` |
+| `image_type` | CodeBuild image type (arm-3.0, x86-3.0, etc.) | `arm-3.0` |
+| `project_name` | Base name for the CodeBuild project | `myProject` |
+| `build_commands` | Shell commands to run during the build | `echo "Hello World!"` |
+| `additional_parameters` | JSON string with extra parameters | `{}` |
+
+## How to Call the Workflow
+
+You can call the generic workflow from another workflow like this:
+
+```yaml
+jobs:
+  my-build-job:
+    uses: ./.github/workflows/generic-codebuild.yml
+    with:
+      java_version: '11'
+      instance_size: 'medium'
+      image_type: 'x86-3.0'
+      project_name: 'my-custom-project'
+      build_commands: |
+        echo "Running custom build"
+        ./mvnw clean package
+      additional_parameters: '{"ENV": "staging", "FEATURE_FLAG": "true"}'
+```
+
+## Using Additional Parameters
+
+The `additional_parameters` input accepts a JSON string that gets parsed into environment variables during the build. For example:
+
+```yaml
+additional_parameters: '{"DB_HOST": "localhost", "CACHE_ENABLED": "true", "LOG_LEVEL": "debug"}'
+```
+
+These will be available as environment variables in your build steps.
+
+## Conditional Workflow Execution
+
+You can conditionally run different versions of the workflow based on various triggers:
+
+- Branch-specific builds
+- Environment-specific builds (dev/test/prod)
+- Manual workflow dispatch with options
+
+## Example Use Cases
+
+### Java Application Build
+
+```yaml
+java-app-build:
+  uses: ./.github/workflows/generic-codebuild.yml
+  with:
+    java_version: '17'
+    instance_size: 'medium'
+    build_commands: |
+      ./mvnw clean package
+      ./mvnw test
+```
+
+### Quick Development Build
+
+```yaml
+quick-dev-build:
+  uses: ./.github/workflows/generic-codebuild.yml
+  with:
+    instance_size: 'small'
+    build_commands: |
+      ./mvnw clean package -DskipTests
+    additional_parameters: '{"QUICK_BUILD": "true"}'
+```
+
+### Production Deployment Build
+
+```yaml
+prod-deploy:
+  uses: ./.github/workflows/generic-codebuild.yml
+  with:
+    java_version: '17'
+    instance_size: 'large'
+    project_name: 'myProject-production'
+    build_commands: |
+      ./mvnw clean package
+      ./mvnw deploy
+      ./scripts/deploy-to-production.sh
+    additional_parameters: '{"ENV": "production", "DEPLOY": "true"}'
+```
+
+## Customizing the Runner Configuration
+
+The workflow uses the following format for the CodeBuild runner:
+
+```yaml
+runs-on:
+  - codebuild-{project_name}-{github.run_id}-{github.run_attempt}
+  - image:{image_type}
+  - instance-size:{instance_size}
+```
+
+This ensures each build uses a unique identifier while allowing you to customize the image type and instance size.

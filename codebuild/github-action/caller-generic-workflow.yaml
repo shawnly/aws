@@ -1,0 +1,71 @@
+name: Project Build Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      java_version:
+        description: 'Java version'
+        type: choice
+        options:
+          - '8'
+          - '11'
+          - '17'
+          - '21'
+        default: '17'
+      environment:
+        description: 'Target environment'
+        type: choice
+        options:
+          - 'dev'
+          - 'test'
+          - 'prod'
+        default: 'dev'
+
+jobs:
+  # Development build with default settings
+  dev-build:
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev'
+    uses: ./.github/workflows/generic-codebuild.yml
+    with:
+      java_version: ${{ github.event.inputs.java_version || '17' }}
+      instance_size: 'small'
+      image_type: 'arm-3.0'
+      project_name: 'myProject-dev'
+      build_commands: |
+        echo "Running development build"
+        ./mvnw clean package -DskipTests
+      additional_parameters: '{"ENV": "development", "DEBUG": "true"}'
+
+  # Production build with larger instance
+  prod-build:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    uses: ./.github/workflows/generic-codebuild.yml
+    with:
+      java_version: ${{ github.event.inputs.java_version || '17' }}
+      instance_size: 'large'
+      image_type: 'x86-3.0'
+      project_name: 'myProject-prod'
+      build_commands: |
+        echo "Running production build"
+        ./mvnw clean package
+        ./mvnw test
+      additional_parameters: '{"ENV": "production", "OPTIMIZE": "true", "CDN_DEPLOY": "true"}'
+
+  # Test environment build
+  test-build:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'test'
+    uses: ./.github/workflows/generic-codebuild.yml
+    with:
+      java_version: ${{ github.event.inputs.java_version || '17' }}
+      instance_size: 'medium'
+      image_type: 'arm-3.0'
+      project_name: 'myProject-test'
+      build_commands: |
+        echo "Running test environment build"
+        ./mvnw clean package
+        ./mvnw verify
+      additional_parameters: '{"ENV": "test", "FULL_TESTING": "true"}'

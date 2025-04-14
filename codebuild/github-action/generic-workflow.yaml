@@ -1,0 +1,80 @@
+name: Generic CodeBuild Workflow
+
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: 'Java version to use (8, 11, 17, 21)'
+        type: string
+        default: '17'
+        required: false
+      instance_size:
+        description: 'CodeBuild instance size (small, medium, large)'
+        type: string
+        default: 'small'
+        required: false
+      image_type:
+        description: 'CodeBuild image type (arm-3.0, x86-3.0, etc.)'
+        type: string
+        default: 'arm-3.0'
+        required: false
+      additional_parameters:
+        description: 'Additional parameters as JSON string'
+        type: string
+        default: '{}'
+        required: false
+      build_commands:
+        description: 'Commands to run during the build'
+        type: string
+        default: 'echo "Hello World!"'
+        required: false
+      project_name:
+        description: 'Base name for the CodeBuild project'
+        type: string
+        default: 'myProject'
+        required: false
+
+jobs:
+  Run-CodeBuild-Job:
+    runs-on:
+      - codebuild-${{ inputs.project_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - image:${{ inputs.image_type }}
+      - instance-size:${{ inputs.instance_size }}
+    env:
+      JAVA_VERSION: ${{ inputs.java_version }}
+      ADDITIONAL_PARAMS: ${{ inputs.additional_parameters }}
+    steps:
+      - name: Print configuration
+        run: |
+          echo "Running with configuration:"
+          echo "Java Version: $JAVA_VERSION"
+          echo "Instance Size: ${{ inputs.instance_size }}"
+          echo "Image Type: ${{ inputs.image_type }}"
+          echo "Project Name: ${{ inputs.project_name }}"
+          echo "Additional Parameters: $ADDITIONAL_PARAMS"
+      
+      - name: Set up Java
+        run: |
+          echo "Setting up Java $JAVA_VERSION"
+          # Commands to configure Java would go here
+          # For example, in an Amazon Linux environment:
+          # amazon-linux-extras install java-openjdk$JAVA_VERSION
+      
+      - name: Process additional parameters
+        run: |
+          # Parse the JSON string and set environment variables
+          if [ "$ADDITIONAL_PARAMS" != "{}" ]; then
+            echo "Processing additional parameters"
+            # This requires jq to be installed in the CodeBuild environment
+            for key in $(echo $ADDITIONAL_PARAMS | jq -r 'keys[]'); do
+              value=$(echo $ADDITIONAL_PARAMS | jq -r --arg k "$key" '.[$k]')
+              echo "Setting $key=$value"
+              export $key="$value"
+              echo "$key=$value" >> $GITHUB_ENV
+            done
+          fi
+      
+      - name: Run build commands
+        run: |
+          echo "Running build commands"
+          ${{ inputs.build_commands }}
