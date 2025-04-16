@@ -1,0 +1,10 @@
+metadata:
+  repository: https://github.com
+  tag: interuss/monitor/v0.12.1
+v1:
+  test_run:
+    resource:-
+      aaa
+  action:
+    test_suite:
+      suite_type: suites.interuss.dss.all_tests
