@@ -1,0 +1,46 @@
+[
+    {
+      "ParameterKey": "VpcId",
+      "ParameterValue": "vpc-0123456789abcdef0"
+    },
+    {
+      "ParameterKey": "SubnetIds",
+      "ParameterValue": "subnet-0123456789abcdef0,subnet-0123456789abcdef1"
+    },
+    {
+      "ParameterKey": "DBInstanceClass",
+      "ParameterValue": "db.t3.medium"
+    },
+    {
+      "ParameterKey": "DBName",
+      "ParameterValue": "mypostgresdb"
+    },
+    {
+      "ParameterKey": "DBUsername",
+      "ParameterValue": "postgres"
+    },
+    {
+      "ParameterKey": "DBAllocatedStorage",
+      "ParameterValue": "20"
+    },
+    {
+      "ParameterKey": "DBBackupRetentionPeriod",
+      "ParameterValue": "7"
+    },
+    {
+      "ParameterKey": "MultiAZEnabled",
+      "ParameterValue": "true"
+    },
+    {
+      "ParameterKey": "PerformanceInsightsEnabled",
+      "ParameterValue": "true"
+    },
+    {
+      "ParameterKey": "StorageType",
+      "ParameterValue": "gp3"
+    },
+    {
+      "ParameterKey": "SourceCidrForRdsAccess",
+      "ParameterValue": "10.0.0.0/16"
+    }
+  ]

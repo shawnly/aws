@@ -1,0 +1,208 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for PostgreSQL RDS instance with security group and auto-generated password'
+
+Parameters:
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: 'VPC where RDS will be created'
+  
+  SubnetIds:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: 'List of subnet IDs (minimum 2 for Multi-AZ)'
+  
+  DBInstanceClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: 'db.t3.micro'
+    AllowedValues:
+      - 'db.t3.micro'
+      - 'db.t3.small'
+      - 'db.t3.medium'
+      - 'db.t3.large'
+      - 'db.t3.xlarge'
+      - 'db.t3.2xlarge'
+      - 'db.m5.large'
+      - 'db.m5.xlarge'
+      - 'db.m5.2xlarge'
+      - 'db.m5.4xlarge'
+      - 'db.r5.large'
+      - 'db.r5.xlarge'
+      - 'db.r5.2xlarge'
+      - 'db.r5.4xlarge'
+
+  DBName:
+    Description: 'PostgreSQL database name'
+    Type: String
+    Default: 'mypostgresdb'
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+    ConstraintDescription: 'Must begin with a letter and contain only alphanumeric characters or underscores'
+  
+  DBUsername:
+    Description: 'PostgreSQL admin username'
+    Type: String
+    Default: 'postgres'
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+    ConstraintDescription: 'Must begin with a letter and contain only alphanumeric characters or underscores'
+  
+  DBAllocatedStorage:
+    Description: 'Allocated storage size in GiB'
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 65536
+    ConstraintDescription: 'Must be between 20 and 65536 GiB'
+  
+  DBBackupRetentionPeriod:
+    Description: 'The number of days to retain automated backups'
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be between 0 and 35'
+  
+  MultiAZEnabled:
+    Description: 'Create a standby instance for high availability'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  PerformanceInsightsEnabled:
+    Description: 'Enable Performance Insights'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  StorageType:
+    Description: 'Storage type for DB instance'
+    Type: String
+    Default: 'gp3'
+    AllowedValues:
+      - 'standard'
+      - 'gp2'
+      - 'gp3'
+      - 'io1'
+  
+  Iops:
+    Description: 'Provisioned IOPS (only for io1 storage type)'
+    Type: Number
+    Default: 1000
+    MinValue: 1000
+    MaxValue: 80000
+  
+  SourceCidrForRdsAccess:
+    Description: 'CIDR block that can access the RDS instance'
+    Type: String
+    Default: '10.0.0.0/16'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+    ConstraintDescription: 'Must be a valid CIDR block'
+
+Conditions:
+  IsMultiAZ: !Equals [!Ref MultiAZEnabled, 'true']
+  IsPerformanceInsightsEnabled: !Equals [!Ref PerformanceInsightsEnabled, 'true']
+  IsIo1StorageType: !Equals [!Ref StorageType, 'io1']
+
+Resources:
+  # Secret for database credentials
+  DatabaseSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub '${AWS::StackName}-db-credentials'
+      Description: 'Secret for RDS PostgreSQL instance credentials'
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${DBUsername}"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"/\@'
+        ExcludePunctuation: false
+        IncludeSpace: false
+  
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for PostgreSQL RDS instance'
+      SubnetIds: !Ref SubnetIds
+  
+  # Security Group for RDS
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for PostgreSQL RDS instance'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref SourceCidrForRdsAccess
+          Description: 'Allow PostgreSQL access from specified CIDR'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-rds-sg'
+  
+  # RDS PostgreSQL Instance
+  PostgreSQLInstance:
+    Type: 'AWS::RDS::DBInstance'
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-postgresql'
+      DBName: !Ref DBName
+      Engine: 'postgres'
+      EngineVersion: '16.1'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: !Ref StorageType
+      Iops: !If [IsIo1StorageType, !Ref Iops, !Ref 'AWS::NoValue']
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Join 
+        - ''
+        - - '{{resolve:secretsmanager:'
+          - !Ref DatabaseSecret
+          - ':SecretString:password}}'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      BackupRetentionPeriod: !Ref DBBackupRetentionPeriod
+      MultiAZ: !Ref MultiAZEnabled
+      StorageEncrypted: true
+      EnablePerformanceInsights: !Ref PerformanceInsightsEnabled
+      PerformanceInsightsRetentionPeriod: !If [IsPerformanceInsightsEnabled, 7, !Ref 'AWS::NoValue']
+      PubliclyAccessible: false
+      CopyTagsToSnapshot: true
+      DeletionProtection: true
+      EnableIAMDatabaseAuthentication: true
+      MonitoringInterval: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-postgresql'
+        - Key: Project
+          Value: uam
+
+Outputs:
+  DatabaseSecretArn:
+    Description: 'ARN of the secret containing database credentials'
+    Value: !Ref DatabaseSecret
+  
+  RDSEndpointAddress:
+    Description: 'The connection endpoint for the PostgreSQL instance'
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Address
+  
+  RDSEndpointPort:
+    Description: 'The port for the PostgreSQL instance'
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Port
+  
+  RDSSecurityGroupId:
+    Description: 'Security Group ID for the RDS instance'
+    Value: !GetAtt RDSSecurityGroup.GroupId
+  
+  ConnectionString:
+    Description: 'PostgreSQL connection string'
+    Value: !Sub 'postgresql://${DBUsername}@${PostgreSQLInstance.Endpoint.Address}:${PostgreSQLInstance.Endpoint.Port}/${DBName}'
