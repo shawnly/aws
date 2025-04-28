@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ALB to Lambda forward for serving .der files from S3
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: The name of the S3 bucket containing .der files
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ALBLambdaS3AccessRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${BucketName}/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  DerFileLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DerFileLambda
+      Runtime: python3.12
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: index.lambda_handler
+      Timeout: 10
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref BucketName
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import base64
+
+          s3 = boto3.client('s3')
+          bucket = os.environ['BUCKET_NAME']
+
+          def lambda_handler(event, context):
+              path = event['rawPath'].lstrip('/')
+              try:
+                  obj = s3.get_object(Bucket=bucket, Key=path)
+                  content = obj['Body'].read()
+                  return {
+                      "statusCode": 200,
+                      "statusDescription": "200 OK",
+                      "isBase64Encoded": True,
+                      "headers": {
+                          "Content-Type": "application/x-x509-ca-cert",
+                          "Content-Disposition": f'attachment; filename="{path.split("/")[-1]}"'
+                      },
+                      "body": base64.b64encode(content).decode("utf-8")
+                  }
+              except Exception as e:
+                  return {
+                      "statusCode": 404,
+                      "statusDescription": "404 Not Found",
+                      "body": str(e)
+                  }
+
+  LambdaPermissionForALB:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DerFileLambda
+      Action: lambda:InvokeFunction
+      Principal: elasticloadbalancing.amazonaws.com
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP access
+      VpcId: vpc-xxxxxxxx  # Replace with your actual VPC ID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: DerFileALB
+      Scheme: internet-facing
+      Subnets:
+        - subnet-xxxxxx1  # Replace with your subnets
+        - subnet-xxxxxx2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  LambdaTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: lambda
+      Targets:
+        - Id: !GetAtt DerFileLambda.Arn
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LambdaTargetGroup

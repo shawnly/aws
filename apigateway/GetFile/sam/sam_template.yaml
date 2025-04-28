@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serve .der files from S3 with IP restriction via API Gateway
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name of your S3 bucket storing .der files
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.12
+
+Resources:
+  GetDerFileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: GetDerFileLambda
+      Handler: index.lambda_handler
+      InlineCode: |
+        import boto3
+        import base64
+        import urllib.parse
+        import os
+
+        s3 = boto3.client('s3')
+        BUCKET_NAME = os.environ['BUCKET_NAME']
+
+        def lambda_handler(event, context):
+            try:
+                path = event['rawPath'].lstrip('/')
+                key = urllib.parse.unquote_plus(path)
+
+                response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+                content = response['Body'].read()
+
+                return {
+                    'statusCode': 200,
+                    'isBase64Encoded': True,
+                    'headers': {
+                        'Content-Type': 'application/x-x509-ca-cert',
+                        'Content-Disposition': f'attachment; filename="{key.split("/")[-1]}"'
+                    },
+                    'body': base64.b64encode(content).decode('utf-8')
+                }
+            except Exception as e:
+                return {
+                    'statusCode': 404,
+                    'body': str(e)
+                }
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref BucketName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub arn:aws:s3:::${BucketName}/*
+        - CloudWatchLogsFullAccess
+      Events:
+        DerApi:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: GET
+            ApiId: !Ref DerApi
+
+  DerApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: DerFileHttpApi
+      CorsConfiguration:
+        AllowMethods:
+          - GET
+        AllowOrigins:
+          - '*'
+      Auth:
+        ResourcePolicy:
+          CustomStatements:
+            - Effect: Allow
+              Principal: '*'
+              Action: execute-api:Invoke
+              Resource: execute-api:/*/*/*
+              Condition:
+                IpAddress:
+                  aws:SourceIp:
+                    - 203.0.113.5
+                    - 198.51.100.0/24
