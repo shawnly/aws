@@ -8,7 +8,7 @@ This guide provides step-by-step instructions to:
 
 ---
 
-## ✅ 1. Install Python 3 (using Homebrew)
+## ✅ 1. Install Python 3 (using Homebrew) 
 
 Open Terminal and run:
 
@@ -126,4 +126,34 @@ Install them later with:
 
 ```bash
 pip install -r requirements.txt
+```
+
+
+---
+
+## 🔧 Updating Packages in a Virtual Environment
+
+### ✅ Activate the Virtual Environment
+
+```bash
+source venv/bin/activate
+```
+
+### ✅ Update a Specific Package (e.g., boto3)
+
+```bash
+pip install --upgrade boto3
+```
+
+### ✅ Update All Packages
+
+```bash
+pip list --outdated --format=freeze > outdated.txt
+cat outdated.txt | cut -d = -f 1 | xargs -n1 pip install -U
+```
+
+### ✅ Regenerate requirements.txt
+
+```bash
+pip freeze > requirements.txt
 ```
