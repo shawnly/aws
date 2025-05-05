@@ -1,0 +1,64 @@
+name: Deploy CodeBuild Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-name:
+        description: "CodeBuild project name"
+        required: true
+      source-type:
+        description: "Source type (e.g. GITHUB)"
+        required: true
+      github-org:
+        description: "GitHub org/user"
+        required: true
+      vpc-id:
+        description: "VPC ID"
+        required: true
+      subnets:
+        description: "Comma-separated subnet IDs"
+        required: true
+      security-group-ids:
+        description: "Comma-separated security group IDs"
+        required: true
+      compute-type:
+        description: "Compute type (e.g. BUILD_GENERAL1_SMALL)"
+        required: true
+      service-role:
+        description: "IAM role for CodeBuild"
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install boto3
+
+    - name: Run CodeBuild creation script
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+        GITHUB_TOKEN: ${{ secrets.CODEBUILD_GITHUB_TOKEN }}
+      run: |
+        python create_codebuild.py \
+          --project-name "${{ github.event.inputs.project-name }}" \
+          --source-type "${{ github.event.inputs.source-type }}" \
+          --github-org "${{ github.event.inputs.github-org }}" \
+          --github-token "$GITHUB_TOKEN" \
+          --vpc-id "${{ github.event.inputs.vpc-id }}" \
+          --subnets "${{ github.event.inputs.subnets }}" \
+          --security-group-ids "${{ github.event.inputs.security-group-ids }}" \
+          --compute-type "${{ github.event.inputs.compute-type }}" \
+          --service-role "${{ github.event.inputs.service-role }}"

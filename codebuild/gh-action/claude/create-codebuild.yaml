@@ -1,0 +1,90 @@
+name: Create AWS CodeBuild Project
+
+on:
+  # You can trigger this manually
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: 'Name for the CodeBuild project'
+        required: true
+      codebuild_type:
+        description: 'Type of CodeBuild project'
+        required: true
+        default: 'LINUX_CONTAINER'
+      vpc_id:
+        description: 'VPC ID for the project'
+        required: false
+      subnet_ids:
+        description: 'Comma-separated list of subnet IDs'
+        required: false
+      security_group_ids:
+        description: 'Comma-separated list of security group IDs'
+        required: false
+      github_branch:
+        description: 'GitHub branch to build from'
+        required: false
+        default: 'main'
+      build_spec_path:
+        description: 'Path to the buildspec file'
+        required: false
+        default: 'buildspec.yml'
+      environment_type:
+        description: 'Environment type for the build'
+        required: false
+        default: 'LINUX_CONTAINER'
+      compute_type:
+        description: 'Compute resources for the build'
+        required: false
+        default: 'BUILD_GENERAL1_SMALL'
+      image:
+        description: 'Docker image to use for the build'
+        required: false
+        default: 'aws/codebuild/amazonlinux2-x86_64-standard:4.0'
+  
+  # Optional: You can also trigger automatically on push to specific branches
+  # push:
+  #   branches: [ main ]
+
+jobs:
+  create-codebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run CodeBuild creation script
+        run: |
+          python create_codebuild.py \
+            --project-name "${{ github.event.inputs.project_name }}" \
+            --codebuild-type "${{ github.event.inputs.codebuild_type }}" \
+            --github-token "${{ secrets.GITHUB_TOKEN }}" \
+            --github-org "${{ github.repository_owner }}" \
+            --github-repo "${{ github.repository }}" \
+            ${{ github.event.inputs.vpc_id && format('--vpc-id "{0}"', github.event.inputs.vpc_id) || '' }} \
+            ${{ github.event.inputs.subnet_ids && format('--subnet-ids "{0}"', github.event.inputs.subnet_ids) || '' }} \
+            ${{ github.event.inputs.security_group_ids && format('--security-group-ids "{0}"', github.event.inputs.security_group_ids) || '' }} \
+            ${{ github.event.inputs.github_branch && format('--github-branch "{0}"', github.event.inputs.github_branch) || '' }} \
+            ${{ github.event.inputs.build_spec_path && format('--build-spec-path "{0}"', github.event.inputs.build_spec_path) || '' }} \
+            ${{ github.event.inputs.environment_type && format('--environment-type "{0}"', github.event.inputs.environment_type) || '' }} \
+            ${{ github.event.inputs.compute_type && format('--compute-type "{0}"', github.event.inputs.compute_type) || '' }} \
+            ${{ github.event.inputs.image && format('--image "{0}"', github.event.inputs.image) || '' }} \
+            --service-role "${{ secrets.AWS_CODEBUILD_SERVICE_ROLE }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
