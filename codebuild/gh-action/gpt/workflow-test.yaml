@@ -1,0 +1,126 @@
+name: 🧪 Test CodeBuild Inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-name:
+        description: 'CodeBuild project name'
+        required: false
+      source-type:
+        description: 'Source type (e.g., GITHUB)'
+        required: true
+        default: 'GITHUB'
+      github-org:
+        description: 'GitHub organization/user'
+        required: true
+        default: 'my-org'
+      vpc-id:
+        description: 'VPC ID'
+        required: true
+        default: 'vpc-xxxxxxxx'
+      subnets:
+        description: 'Comma-separated subnet IDs'
+        required: true
+        default: 'subnet-abc123,subnet-def456'
+      security-groups:
+        description: 'Comma-separated security group IDs'
+        required: true
+        default: 'sg-12345678'
+      compute-type:
+        description: 'Compute type'
+        required: true
+        default: 'BUILD_GENERAL1_SMALL'
+      service-role:
+        description: 'IAM Role ARN'
+        required: true
+        default: 'arn:aws:iam::123456789012:role/CodeBuildServiceRole'
+
+jobs:
+  test-inputs:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Echo all input parameters
+      run: |
+        echo "✅ Project Name: ${{ github.event.inputs.project-name }}"
+        echo "✅ Source Type: ${{ github.event.inputs.source-type }}"
+        echo "✅ GitHub Org : ${{ github.event.inputs.github-org }}"
+        echo "✅ VPC ID     : ${{ github.event.inputs.vpc-id }}"
+        echo "✅ Subnets    : ${{ github.event.inputs.subnets }}"
+        echo "✅ Sec Groups : ${{ github.event.inputs.security-groups }}"
+        echo "✅ Compute    : ${{ github.event.inputs.compute-type }}"
+        echo "✅ IAM Role   : ${{ github.event.inputs.service-role }}"
+
+    - name: Echo secrets (sanitized)
+      run: |
+        echo "🔐 AWS_ACCESS_KEY_ID set: ${AWS_ACCESS_KEY_ID:+yes}"
+        echo "🔐 AWS_SECRET_ACCESS_KEY set: ${AWS_SECRET_ACCESS_KEY:+yes}"
+        echo "🔐 AWS_REGION set: ${AWS_REGION:+yes}"
+        echo "🔐 GITHUB_TOKEN set: ${CODEBUILD_GITHUB_TOKEN:+yes}"
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+        CODEBUILD_GITHUB_TOKEN: ${{ secrets.CODEBUILD_GITHUB_TOKEN }}
+name: 🧪 Test CodeBuild Inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-name:
+        description: 'CodeBuild project name'
+        required: false
+      source-type:
+        description: 'Source type (e.g., GITHUB)'
+        required: true
+        default: 'GITHUB'
+      github-org:
+        description: 'GitHub organization/user'
+        required: true
+        default: 'my-org'
+      vpc-id:
+        description: 'VPC ID'
+        required: true
+        default: 'vpc-xxxxxxxx'
+      subnets:
+        description: 'Comma-separated subnet IDs'
+        required: true
+        default: 'subnet-abc123,subnet-def456'
+      security-groups:
+        description: 'Comma-separated security group IDs'
+        required: true
+        default: 'sg-12345678'
+      compute-type:
+        description: 'Compute type'
+        required: true
+        default: 'BUILD_GENERAL1_SMALL'
+      service-role:
+        description: 'IAM Role ARN'
+        required: true
+        default: 'arn:aws:iam::123456789012:role/CodeBuildServiceRole'
+
+jobs:
+  test-inputs:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Echo all input parameters
+      run: |
+        echo "✅ Project Name: ${{ github.event.inputs.project-name }}"
+        echo "✅ Source Type: ${{ github.event.inputs.source-type }}"
+        echo "✅ GitHub Org : ${{ github.event.inputs.github-org }}"
+        echo "✅ VPC ID     : ${{ github.event.inputs.vpc-id }}"
+        echo "✅ Subnets    : ${{ github.event.inputs.subnets }}"
+        echo "✅ Sec Groups : ${{ github.event.inputs.security-groups }}"
+        echo "✅ Compute    : ${{ github.event.inputs.compute-type }}"
+        echo "✅ IAM Role   : ${{ github.event.inputs.service-role }}"
+
+    - name: Echo secrets (sanitized)
+      run: |
+        echo "🔐 AWS_ACCESS_KEY_ID set: ${AWS_ACCESS_KEY_ID:+yes}"
+        echo "🔐 AWS_SECRET_ACCESS_KEY set: ${AWS_SECRET_ACCESS_KEY:+yes}"
+        echo "🔐 AWS_REGION set: ${AWS_REGION:+yes}"
+        echo "🔐 GITHUB_TOKEN set: ${CODEBUILD_GITHUB_TOKEN:+yes}"
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+        CODEBUILD_GITHUB_TOKEN: ${{ secrets.CODEBUILD_GITHUB_TOKEN }}
