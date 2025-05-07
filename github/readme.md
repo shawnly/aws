@@ -68,6 +68,57 @@ Hi your-username! You've successfully authenticated...
 
 ---
 
+## 👥 Using Multiple GitHub Accounts
+
+If you have more than one GitHub account (e.g., personal and work), you can configure multiple SSH keys like this:
+
+### 1. Generate multiple keys
+
+```bash
+ssh-keygen -t ed25519 -C "personal@example.com" -f ~/.ssh/id_ed25519_personal
+ssh-keygen -t ed25519 -C "work@example.com" -f ~/.ssh/id_ed25519_work
+```
+
+### 2. Add keys to the SSH agent
+
+```bash
+ssh-add ~/.ssh/id_ed25519_personal
+ssh-add ~/.ssh/id_ed25519_work
+```
+
+### 3. Edit `~/.ssh/config`
+
+```bash
+nano ~/.ssh/config
+```
+
+Add the following:
+
+```ssh
+# Personal GitHub
+Host github-personal
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_personal
+  IdentitiesOnly yes
+
+# Work GitHub
+Host github-work
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_work
+  IdentitiesOnly yes
+```
+
+### 4. Clone using the custom host
+
+```bash
+git clone git@github-personal:username/repo.git
+git clone git@github-work:yourorg/repo.git
+```
+
+---
+
 ## 🛠 Troubleshooting
 
 - If you see permission denied errors, ensure your SSH agent is running and the key is added.
