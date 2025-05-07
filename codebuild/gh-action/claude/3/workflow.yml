@@ -1,0 +1,54 @@
+name: Setup GitHub CodeBuild Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: 'CodeBuild Project Name'
+        required: true
+        default: 'github-org-runner'
+        type: string
+
+jobs:
+  setup-codebuild-runner:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-actions-role  # Replace with actual role ARN
+          aws-region: us-east-1
+      
+      - name: Retrieve GitHub token from AWS Secrets Manager
+        id: get-github-token
+        run: |
+          TOKEN=$(aws secretsmanager get-secret-value --secret-id github-token-${{ github.repository_owner }} --query SecretString --output text | jq -r '.token')
+          echo "::add-mask::$TOKEN"
+          echo "::set-output name=token::$TOKEN"
+      
+      - name: Invoke Lambda to create CodeBuild runner
+        run: |
+          aws lambda invoke \
+            --function-name create-codebuild-github-runner-${{ github.repository_owner }} \
+            --payload '{
+              "github_org": "${{ github.repository_owner }}",
+              "github_token": "${{ steps.get-github-token.outputs.token }}",
+              "codebuild_project_name": "${{ github.event.inputs.project_name }}",
+              "vpc_id": "${{ secrets.VPC_ID }}",
+              "subnet_ids": ${{ secrets.SUBNET_IDS }},
+              "security_group_id": "${{ secrets.SECURITY_GROUP_ID }}",
+              "github_enterprise_domain": "${{ secrets.GITHUB_ENTERPRISE_DOMAIN }}",
+              "service_role_arn": "${{ secrets.CODEBUILD_SERVICE_ROLE_ARN }}"
+            }' \
+            --cli-binary-format raw-in-base64-out \
+            response.json
+          
+          cat response.json
+          echo "Runner setup process completed"

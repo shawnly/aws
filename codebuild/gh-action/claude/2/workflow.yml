@@ -1,0 +1,27 @@
+name: Trigger CodeBuild Lambda
+
+on:
+  workflow_dispatch:
+
+jobs:
+  invoke-lambda:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke Lambda to create CodeBuild project
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-west-2
+        run: |
+          aws lambda invoke \
+            --function-name CreateCodeBuildProjectLambda \
+            --payload '{
+              "project_name": "my-project",
+              "github_org": "my-org",
+              "github_token": "'"${{ secrets.GITHUB_TOKEN }}"'",
+              "vpc_id": "vpc-xxxx",
+              "subnets": ["subnet-xxxx", "subnet-yyyy"],
+              "security_groups": ["sg-xxxxxx"],
+              "service_role": "arn:aws:iam::123456789012:role/CodeBuildRole"
+            }' \
+            response.json && cat response.json

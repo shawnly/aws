@@ -1,0 +1,316 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy a Lambda function that creates a CodeBuild GitHub runner'
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub Organization Name
+  
+  GitHubEnterpriseUrl:
+    Type: String
+    Description: GitHub Enterprise domain (e.g., developer.example.com)
+    
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the CodeBuild project will run
+    
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets where the CodeBuild project will run
+    
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group for the CodeBuild project
+
+  CodeBuildProjectName:
+    Type: String
+    Description: Name of the CodeBuild project
+    Default: github-org-runner
+
+  # GitHubToken is sensitive and should be passed at deployment time
+  # Or better yet, stored in Secrets Manager and referenced
+
+Resources:
+  # IAM Role for the Lambda function
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CodeBuildAndSecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateProject
+                  - codebuild:DeleteProject
+                  - codebuild:CreateWebhook
+                  - codebuild:UpdateWebhook
+                  - codebuild:DeleteWebhook
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:codebuild-github-runner-*'
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # IAM Role for CodeBuild
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: CodeBuildBasePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: '*'
+
+  # Secret to store GitHub token
+  GitHubTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'github-token-${GitHubOrg}'
+      Description: 'GitHub Personal Access Token with admin:org_hook scope'
+      SecretString: '{"token": "{{resolve:ssm-secure:GitHubTokenParameter:1}}"}'
+
+  # Lambda function to create CodeBuild runner
+  CreateCodeBuildRunnerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'create-codebuild-github-runner-${GitHubOrg}'
+      Description: 'Lambda function to create a CodeBuild GitHub runner for an organization'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          DEFAULT_AWS_REGION: !Ref 'AWS::Region'
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import requests
+
+          def lambda_handler(event, context):
+              """
+              Lambda function to create CodeBuild organization runner and save webhook info to AWS Secrets Manager
+              
+              Input Parameters (in event):
+              - github_org: GitHub Organization Name
+              - github_token: GitHub PAT with "admin:org_hook" scope
+              - aws_region: AWS Region for resources
+              - codebuild_project_name: Name of the CodeBuild project
+              - vpc_id: VPC ID where CodeBuild will run
+              - subnet_ids: List of Subnet IDs
+              - security_group_id: Security Group ID
+              - github_enterprise_domain: GitHub Enterprise domain (e.g., "developer.example.com")
+              - service_role_arn: ARN of the IAM role for CodeBuild
+              """
+              
+              # Extract parameters from the event
+              github_org = event.get('github_org')
+              github_token = event.get('github_token')
+              aws_region = event.get('aws_region', 'us-east-1')
+              codebuild_project_name = event.get('codebuild_project_name')
+              vpc_id = event.get('vpc_id')
+              subnet_ids = event.get('subnet_ids', [])
+              security_group_id = event.get('security_group_id')
+              github_enterprise_domain = event.get('github_enterprise_domain')
+              service_role_arn = event.get('service_role_arn')
+              
+              # Validate required parameters
+              required_params = ['github_org', 'github_token', 'codebuild_project_name', 
+                              'vpc_id', 'subnet_ids', 'security_group_id', 
+                              'github_enterprise_domain', 'service_role_arn']
+                              
+              missing_params = [param for param in required_params if not event.get(param)]
+              
+              if missing_params:
+                  return {
+                      'statusCode': 400,
+                      'body': json.dumps({
+                          'message': f'Missing required parameters: {", ".join(missing_params)}'
+                      })
+                  }
+              
+              # Initialize AWS clients
+              codebuild_client = boto3.client('codebuild', region_name=aws_region)
+              secrets_client = boto3.client('secretsmanager', region_name=aws_region)
+              
+              try:
+                  # Step 1: Create CodeBuild Runner Project (Organization Level)
+                  response = codebuild_client.create_project(
+                      name=codebuild_project_name,
+                      description='CodeBuild Runner for GitHub Enterprise Organization',
+                      source={
+                          'type': 'GITHUB_ENTERPRISE',
+                          'location': 'CODEBUILD_DEFAULT_WEBHOOK_SOURCE_LOCATION',
+                          'gitCloneDepth': 1,
+                          'reportBuildStatus': True,
+                          'gitSubmodulesConfig': {'fetchSubmodules': False}
+                      },
+                      artifacts={'type': 'NO_ARTIFACTS'},
+                      environment={
+                          'type': 'LINUX_CONTAINER',
+                          'image': 'aws/codebuild/amazonlinux2-x86_64-standard:5.0',
+                          'computeType': 'BUILD_GENERAL1_MEDIUM',
+                          'privilegedMode': False
+                      },
+                      vpcConfig={
+                          'vpcId': vpc_id,
+                          'subnets': subnet_ids,
+                          'securityGroupIds': [security_group_id]
+                      },
+                      serviceRole=service_role_arn,
+                      timeoutInMinutes=60,
+                      queuedTimeoutInMinutes=480,
+                      logsConfig={'cloudWatchLogs': {'status': 'ENABLED'}},
+                      badgeEnabled=False,
+                  )
+                  
+                  project_arn = response['project']['arn']
+                  
+                  # Step 2: Create Webhook with Organization-Level Runner
+                  webhook_response = codebuild_client.create_webhook(
+                      projectName=codebuild_project_name,
+                      filterGroups=[[
+                          {'type': 'EVENT', 'pattern': 'WORKFLOW_JOB_QUEUED'}
+                      ]],
+                      manualCreation=True,  # Ensures AWS provides Payload URL instead of auto-creating
+                      scopeConfiguration={
+                          'name': github_org,  # GitHub Organization Name
+                          'domain': github_enterprise_domain,
+                          'scope': 'GITHUB_ORGANIZATION'  # Sets it to Organization Level
+                      }
+                  )
+                  
+                  # Step 3: Extract Webhook Payload and Secret
+                  payload_url = webhook_response['webhook']['payloadUrl']
+                  secret_value = webhook_response['webhook']['secret']
+                  
+                  # Step 4: Save webhook information to AWS Secrets Manager
+                  secret_data = {
+                      'payloadUrl': payload_url,
+                      'secret': secret_value,
+                      'projectArn': project_arn,
+                      'projectName': codebuild_project_name,
+                      'githubOrg': github_org
+                  }
+                  
+                  # Use the project name as the secret name
+                  secret_name = f"codebuild-github-runner-{codebuild_project_name}"
+                  
+                  # Create or update the secret
+                  try:
+                      # Try to update existing secret
+                      secrets_client.update_secret(
+                          SecretId=secret_name,
+                          SecretString=json.dumps(secret_data)
+                      )
+                  except secrets_client.exceptions.ResourceNotFoundException:
+                      # If secret doesn't exist, create it
+                      secrets_client.create_secret(
+                          Name=secret_name,
+                          Description=f'GitHub webhook information for CodeBuild runner {codebuild_project_name}',
+                          SecretString=json.dumps(secret_data)
+                      )
+                  
+                  # Step 5: Automatically Add Webhook to GitHub Organization
+                  headers = {
+                      "Authorization": f"token {github_token}",
+                      "Accept": "application/vnd.github.v3+json"
+                  }
+                  webhook_data = {
+                      "name": "web",
+                      "active": True,
+                      "events": ["workflow_job"],
+                      "config": {
+                          "url": payload_url,
+                          "content_type": "json",
+                          "secret": secret_value,
+                          "insecure_ssl": "0"
+                      }
+                  }
+                  github_api_url = f"https://api.github.com/orgs/{github_org}/hooks"
+                  github_response = requests.post(github_api_url, headers=headers, json=webhook_data)
+                  
+                  github_status = github_response.status_code
+                  github_result = "Success" if github_status == 201 else f"Failed: {github_response.text}"
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'message': 'CodeBuild runner and GitHub webhook created successfully',
+                          'projectArn': project_arn,
+                          'secretName': secret_name,
+                          'githubWebhookStatus': github_status,
+                          'githubResult': github_result
+                      })
+                  }
+                  
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({
+                          'message': f'Error creating CodeBuild project: {str(e)}'
+                      })
+                  }
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the created Lambda function
+    Value: !GetAtt CreateCodeBuildRunnerFunction.Arn
+  
+  CodeBuildServiceRoleArn:
+    Description: ARN of the CodeBuild service role
+    Value: !GetAtt CodeBuildServiceRole.Arn
+  
+  GitHubTokenSecretName:
+    Description: Name of the secret storing the GitHub token
+    Value: !Ref GitHubTokenSecret

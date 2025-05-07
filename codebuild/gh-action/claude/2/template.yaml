@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Inline Lambda to create CodeBuild projects and store webhook info in Secrets Manager
+
+Resources:
+
+  CodeBuildLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodeBuildLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaCodeBuildSecretsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateProject
+                  - codebuild:CreateWebhook
+                  - codebuild:BatchGetProjects
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:PutSecretValue
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  CodeBuildLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CreateCodeBuildProjectLambda
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt CodeBuildLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          
+          codebuild = boto3.client('codebuild')
+          secretsmanager = boto3.client('secretsmanager')
+          
+          def lambda_handler(event, context):
+              try:
+                  project_name = event['project_name']
+                  github_org = event['github_org']
+                  github_token = event['github_token']
+                  source_type = event.get('source_type', 'GITHUB')
+                  vpc_id = event['vpc_id']
+                  subnets = event['subnets']
+                  security_groups = event['security_groups']
+                  compute_type = event.get('compute_type', 'BUILD_GENERAL1_SMALL')
+                  service_role = event['service_role']
+          
+                  response = codebuild.create_project(
+                      name=project_name,
+                      source={
+                          'type': source_type,
+                          'location': f"https://github.com/{github_org}/{project_name}.git",
+                          'auth': {
+                              'type': 'OAUTH',
+                              'resource': github_token
+                          }
+                      },
+                      artifacts={'type': 'NO_ARTIFACTS'},
+                      environment={
+                          'type': 'LINUX_CONTAINER',
+                          'image': 'aws/codebuild/standard:5.0',
+                          'computeType': compute_type,
+                      },
+                      serviceRole=service_role,
+                      vpcConfig={
+                          'vpcId': vpc_id,
+                          'subnets': subnets,
+                          'securityGroupIds': security_groups
+                      }
+                  )
+          
+                  webhook_response = codebuild.create_webhook(projectName=project_name)
+                  webhook_info = {
+                      "webhook_url": webhook_response['webhook']['url'],
+                      "secret": webhook_response['webhook']['secret']
+                  }
+          
+                  secret_name = f"{project_name}/webhook_info"
+                  try:
+                      secretsmanager.create_secret(
+                          Name=secret_name,
+                          SecretString=json.dumps(webhook_info)
+                      )
+                  except secretsmanager.exceptions.ResourceExistsException:
+                      secretsmanager.update_secret(
+                          SecretId=secret_name,
+                          SecretString=json.dumps(webhook_info)
+                      )
+          
+                  return {
+                      'statusCode': 200,
+                      'body': f"CodeBuild project '{project_name}' created and webhook info stored in secret '{secret_name}'."
+                  }
+          
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': str(e)
+                  }
+      Timeout: 60
