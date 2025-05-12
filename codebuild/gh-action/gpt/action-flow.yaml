@@ -1,0 +1,64 @@
+name: Deploy AWS CodeBuild Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-name:
+        description: 'CodeBuild project name'
+        required: true
+      source-type:
+        description: 'Source type (e.g., GITHUB)'
+        required: true
+      github-org:
+        description: 'GitHub organization/user'
+        required: true
+      vpc-id:
+        description: 'VPC ID'
+        required: true
+      subnets:
+        description: 'Comma-separated subnet IDs'
+        required: true
+      security-groups:
+        description: 'Comma-separated security group IDs'
+        required: true
+      compute-type:
+        description: 'Compute type (e.g., BUILD_GENERAL1_SMALL)'
+        required: true
+      service-role:
+        description: 'IAM Role ARN for CodeBuild'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install boto3
+
+    - name: Run create-codebuild.py script
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+        GITHUB_TOKEN: ${{ secrets.CODEBUILD_GITHUB_TOKEN }}
+      run: |
+        python create-codebuild.py \
+          --project-name "${{ github.event.inputs.project-name }}" \
+          --source-type "${{ github.event.inputs.source-type }}" \
+          --github-org "${{ github.event.inputs.github-org }}" \
+          --github-token "$GITHUB_TOKEN" \
+          --vpc-id "${{ github.event.inputs.vpc-id }}" \
+          --subnets "${{ github.event.inputs.subnets }}" \
+          --security-groups "${{ github.event.inputs.security-groups }}" \
+          --compute-type "${{ github.event.inputs.compute-type }}" \
+          --service-role "${{ github.event.inputs.service-role }}"

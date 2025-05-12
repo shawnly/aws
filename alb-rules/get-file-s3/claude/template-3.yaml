@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda function in VPC for S3 file retrieval with existing ALB (uses NAT Gateway)'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket containing the files
+  
+  ListenerArn:
+    Type: String
+    Description: ARN of the existing ALB listener
+    AllowedPattern: "arn:aws:elasticloadbalancing:.*:.*:listener/app/.*"
+    ConstraintDescription: Must be a valid ALB listener ARN
+  
+  Priority:
+    Type: Number
+    Description: Priority for the listener rule (must be unique)
+    Default: 100
+    MinValue: 1
+    MaxValue: 50000
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where Lambda will be deployed
+  
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnet IDs for Lambda (at least 2 required for HA) - must have NAT Gateway
+
+Resources:
+  # Security Group for Lambda
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda function to access S3
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0  # HTTPS for S3 access via VPC endpoint or NAT
+          Description: Allow HTTPS outbound for S3 access
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-lambda-sg'
+
+  # Note: No VPC endpoint needed. Lambda will use NAT Gateway for S3 access
+
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/pki/*'
+
+  # Lambda function
+  FileRetrievalFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          S3_BUCKET_NAME: !Ref S3BucketName
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !Ref SubnetIds
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import logging
+          import mimetypes
+          import base64
+
+          # Set up logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Initialize S3 client
+          s3 = boto3.client('s3')
+
+          def handler(event, context):
+              try:
+                  # Extract path parameters from the ALB event
+                  path = event.get('path', '')
+                  
+                  # Parse the path to extract project name and file name
+                  # Expected format: /pki/{project-name}/{file-name}
+                  path_segments = [segment for segment in path.split('/') if segment]
+                  
+                  if len(path_segments) < 3 or path_segments[0] != 'pki':
+                      return {
+                          'statusCode': 400,
+                          'headers': {'Content-Type': 'application/json'},
+                          'body': json.dumps({'error': 'Invalid path format. Expected: /pki/{project-name}/{file-name}'})
+                      }
+                  
+                  project_name = path_segments[1]
+                  file_name = path_segments[2]
+                  
+                  # Construct the S3 key (without root folder)
+                  s3_key = f"pki/{project_name}/{file_name}"
+                  bucket_name = os.environ.get('S3_BUCKET_NAME')
+                  
+                  logger.info(f"Attempting to retrieve file: s3://{bucket_name}/{s3_key}")
+                  
+                  # Get the object from S3
+                  response = s3.get_object(
+                      Bucket=bucket_name,
+                      Key=s3_key
+                  )
+                  
+                  # Determine content type based on file extension
+                  content_type = get_content_type(file_name)
+                  
+                  # Get the file content
+                  file_content = response['Body'].read()
+                  
+                  # Return the file content with appropriate headers
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Content-Type': content_type,
+                          'Content-Disposition': f'inline; filename="{file_name}"'
+                      },
+                      'body': base64.b64encode(file_content).decode('utf-8'),
+                      'isBase64Encoded': True
+                  }
+              
+              except s3.exceptions.NoSuchKey:
+                  logger.error(f"File not found: {s3_key}")
+                  return {
+                      'statusCode': 404,
+                      'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps({'error': 'File not found'})
+                  }
+              
+              except Exception as e:
+                  logger.error(f"Error retrieving file from S3: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps({'error': 'Internal server error'})
+                  }
+
+          def get_content_type(file_name):
+              # Use mimetypes library to determine content type
+              content_type, _ = mimetypes.guess_type(file_name)
+              
+              # If content type couldn't be determined, use default
+              if not content_type:
+                  content_type = 'application/octet-stream'
+              
+              return content_type
+
+  # Target Group for Lambda
+  FileRetrievalTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: S3FilesRetrievalTG
+      TargetType: lambda
+      Targets:
+        - Id: !GetAtt FileRetrievalFunction.Arn
+      HealthCheckEnabled: false
+
+  # Lambda permission for ALB
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref FileRetrievalFunction
+      Principal: 'elasticloadbalancing.amazonaws.com'
+      # Construct the ARN manually to avoid circular dependency
+      SourceArn: !Sub 'arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/S3FilesRetrievalTG/*'
+
+
+  # ALB Listener Rule for file retrieval
+  FileRetrievalListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FileRetrievalTargetGroup
+      Conditions:
+        - PathPatternConfig:
+            Values:
+              - /pki/*
+          Field: path-pattern
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref Priority
+
+# No conditions needed - using NAT Gateway for S3 access
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt FileRetrievalFunction.Arn
+  
+  TargetGroupArn:
+    Description: ARN of the target group
+    Value: !Ref FileRetrievalTargetGroup
+  
+  ListenerRuleArn:
+    Description: ARN of the listener rule
+    Value: !Ref FileRetrievalListenerRule
+  
+  LambdaSecurityGroupId:
+    Description: Security Group ID for the Lambda
+    Value: !Ref LambdaSecurityGroup

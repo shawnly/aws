@@ -1,0 +1,143 @@
+# AWS Cost Explorer Dashboard Setup Guide
+
+This guide will help you set up a Python environment with Miniconda and create an interactive AWS Cost Explorer dashboard using your read-only AWS credentials.
+
+## Step 1: Install Miniconda
+
+1. **Download Miniconda**:
+   - For macOS: https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+   - For Windows: https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe
+   - For Linux: https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+2. **Install Miniconda**:
+   - macOS/Linux: `bash Miniconda3-latest-*.sh`
+   - Windows: Run the downloaded .exe file
+
+3. **Verify installation**:
+   ```bash
+   conda --version
+   ```
+
+## Step 2: Create a Conda Environment
+
+1. **Create a new environment**:
+   ```bash
+   conda create -n aws-cost python=3.9
+   ```
+
+2. **Activate the environment**:
+   ```bash
+   conda activate aws-cost
+   ```
+
+## Step 3: Set Up Project Directory
+
+1. **Create a project directory**:
+   ```bash
+   mkdir aws-cost-dashboard
+   cd aws-cost-dashboard
+   ```
+
+2. **Create requirements.txt file**:
+   Create a file named `requirements.txt` with the following content:
+   ```
+   boto3==1.26.0
+   pandas==1.5.0
+   plotly==5.10.0
+   python-dateutil==2.8.2
+   numpy==1.23.4
+   ```
+
+3. **Install requirements**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+## Step 4: Configure AWS Credentials
+
+1. **Create AWS credentials directory**:
+   ```bash
+   mkdir -p ~/.aws
+   ```
+
+2. **Create credentials file**:
+   ```bash
+   touch ~/.aws/credentials
+   ```
+
+3. **Edit the credentials file**:
+   Open `~/.aws/credentials` in your text editor and add:
+   ```
+   [default]
+   aws_access_key_id = YOUR_ACCESS_KEY
+   aws_secret_access_key = YOUR_SECRET_KEY
+   ```
+   Replace `YOUR_ACCESS_KEY` and `YOUR_SECRET_KEY` with your read-only AWS credentials.
+
+4. **Create config file** (optional):
+   ```bash
+   touch ~/.aws/config
+   ```
+   Add to the file:
+   ```
+   [default]
+   region = us-east-1
+   output = json
+   ```
+   Change the region if needed.
+
+## Step 5: Create the Dashboard Script
+
+1. **Save the Python Script**:
+   Save the AWS cost dashboard script as `aws_cost_dashboard.py` in your project directory.
+
+2. **Review Script Options**:
+   - The script has a toggle `USE_REAL_DATA = True` at the top
+   - Set this to `False` if you want to test with mock data first
+   - You can adjust `MONTHS_BACK = 6` to change the time period
+
+## Step 6: Run the Dashboard Script
+
+1. **Ensure your conda environment is active**:
+   ```bash
+   conda activate aws-cost
+   ```
+
+2. **Run the script**:
+   ```bash
+   python aws_cost_dashboard.py
+   ```
+
+3. **View the Dashboard**:
+   - The script will create an `aws_cost_report` directory
+   - Open `aws_cost_report/aws_cost_explorer_dashboard.html` in your web browser
+   - An Excel file with the raw data will also be available at `aws_cost_report/aws_cost_report.xlsx`
+
+## Troubleshooting
+
+If you encounter errors:
+
+1. **Check AWS Credentials**: Make sure your credentials have the necessary permissions for Cost Explorer.
+
+2. **Enable Cost Explorer**: If you've never used it before, log into the AWS Console and activate Cost Explorer.
+
+3. **Check Error Log**: The script creates an `error_log.txt` file if it encounters issues.
+
+4. **Test with Mock Data**: Set `USE_REAL_DATA = False` in the script to test the visualization without AWS access.
+
+5. **Verify AWS Access**: Run a simple test script to verify your AWS credentials:
+   ```python
+   import boto3
+   client = boto3.client('sts')
+   print(client.get_caller_identity())
+   ```
+
+## Additional Notes
+
+- **Required Permissions**: Your AWS credentials need `ce:GetCostAndUsage` permission.
+
+- **Cost Data Delay**: AWS Cost Explorer data can be 12-24 hours behind real-time.
+
+- **Custom Dashboard**: Modify the script to add different visualizations or metrics based on your needs.
+
+- **Automation**: Schedule this script to run periodically for regular cost updates.
