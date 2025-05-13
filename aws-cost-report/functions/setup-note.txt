@@ -141,5 +141,3 @@ If you encounter errors:
 - **Custom Dashboard**: Modify the script to add different visualizations or metrics based on your needs.
 
 - **Automation**: Schedule this script to run periodically for regular cost updates.
-
-pip install -r requirements.txt
