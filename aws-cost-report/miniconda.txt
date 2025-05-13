@@ -11,3 +11,9 @@
 #    fi
 #fi
 #unset __conda_setup
+
+
+# >>> conda initialize >>>
+__conda_setup="$('/Users/Shawn/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+eval "$__conda_setup"
+# <<< conda initialize <<<
