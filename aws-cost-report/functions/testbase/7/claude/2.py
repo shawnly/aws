@@ -21,8 +21,10 @@ def get_cost_and_usage(ce_client, start_date, end_date, account_id):
         },
         Granularity='MONTHLY',
         Metrics=[
+            'AmortizedCost',
             'UnblendedCost',
-            'NetUnblendedCost',  # Includes refunds
+            'NetUnblendedCost',
+            'NetAmortizedCost'
         ],
         GroupBy=[
             {
@@ -40,7 +42,7 @@ def get_cost_and_usage(ce_client, start_date, end_date, account_id):
     
     return response
 
-def process_cost_data(response):
+def process_cost_data(response, account_id, start_date, end_date):
     """Process cost data into a DataFrame"""
     data = []
     
@@ -53,43 +55,78 @@ def process_cost_data(response):
             service = group['Keys'][0]
             metrics = group['Metrics']
             
+            # Extract all cost types
+            amortized_cost = float(metrics['AmortizedCost']['Amount'])
+            amortized_unit = metrics['AmortizedCost']['Unit']
+            
             unblended_cost = float(metrics['UnblendedCost']['Amount'])
             unblended_unit = metrics['UnblendedCost']['Unit']
             
             net_unblended_cost = float(metrics['NetUnblendedCost']['Amount'])
-            net_unit = metrics['NetUnblendedCost']['Unit']
+            net_unblended_unit = metrics['NetUnblendedCost']['Unit']
             
-            # Calculate refund (if any)
-            refund = net_unblended_cost - unblended_cost
+            net_amortized_cost = float(metrics['NetAmortizedCost']['Amount'])
+            net_amortized_unit = metrics['NetAmortizedCost']['Unit']
+            
+            # Calculate refunds
+            unblended_refund = net_unblended_cost - unblended_cost
+            amortized_refund = net_amortized_cost - amortized_cost
             
             data.append({
+                'AccountID': account_id,
+                'ReportStartDate': start_date,
+                'ReportEndDate': end_date,
                 'PeriodStart': period_start,
                 'PeriodEnd': period_end,
                 'Service': service,
+                'AmortizedCost': amortized_cost,
+                'NetAmortizedCost': net_amortized_cost,
+                'AmortizedRefund': amortized_refund,
                 'UnblendedCost': unblended_cost,
                 'NetUnblendedCost': net_unblended_cost,
-                'Refund': refund,
+                'UnblendedRefund': unblended_refund,
                 'Currency': unblended_unit
             })
     
     # Add total row
     if data:
+        total_amortized = sum(item['AmortizedCost'] for item in data)
+        total_net_amortized = sum(item['NetAmortizedCost'] for item in data)
+        total_amortized_refund = sum(item['AmortizedRefund'] for item in data)
+        
         total_unblended = sum(item['UnblendedCost'] for item in data)
-        total_net = sum(item['NetUnblendedCost'] for item in data)
-        total_refund = sum(item['Refund'] for item in data)
+        total_net_unblended = sum(item['NetUnblendedCost'] for item in data)
+        total_unblended_refund = sum(item['UnblendedRefund'] for item in data)
+        
         currency = data[0]['Currency']
         
         data.append({
+            'AccountID': account_id,
+            'ReportStartDate': start_date,
+            'ReportEndDate': end_date,
             'PeriodStart': data[0]['PeriodStart'],
             'PeriodEnd': data[0]['PeriodEnd'],
             'Service': 'TOTAL',
+            'AmortizedCost': total_amortized,
+            'NetAmortizedCost': total_net_amortized,
+            'AmortizedRefund': total_amortized_refund,
             'UnblendedCost': total_unblended,
-            'NetUnblendedCost': total_net,
-            'Refund': total_refund,
+            'NetUnblendedCost': total_net_unblended,
+            'UnblendedRefund': total_unblended_refund,
             'Currency': currency
         })
     
     return pd.DataFrame(data)
+
+def add_report_info(writer, account_id, start_date, end_date):
+    """Add a sheet with report information"""
+    report_info = pd.DataFrame([
+        {"Parameter": "Account ID", "Value": account_id},
+        {"Parameter": "Report Start Date", "Value": start_date},
+        {"Parameter": "Report End Date", "Value": end_date},
+        {"Parameter": "Report Generated", "Value": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    ])
+    report_info.to_excel(writer, sheet_name='Report Info', index=False)
 
 def save_to_excel(df, account_id, start_date, end_date):
     """Save data to Excel in the specified directory structure"""
@@ -108,15 +145,25 @@ def save_to_excel(df, account_id, start_date, end_date):
     # Raw data file path
     raw_file_path = f"{output_dir}/aws-cost-report-{account_id}-{start_date}_to_{end_date}.xlsx"
     
-    # Save raw data
+    # Save raw data with formatting
     with pd.ExcelWriter(raw_file_path, engine='openpyxl') as writer:
+        # Add report info sheet
+        add_report_info(writer, account_id, start_date, end_date)
+        
+        # Add cost details sheet
         df.to_excel(writer, sheet_name='Cost Details', index=False)
     
     # Create and save summary file
-    summary_df = df[['Service', 'NetUnblendedCost', 'Currency']].copy()
+    summary_columns = ['Service', 'AmortizedCost', 'NetAmortizedCost', 'AmortizedRefund', 
+                      'UnblendedCost', 'NetUnblendedCost', 'UnblendedRefund', 'Currency']
+    summary_df = df[summary_columns].copy()
     summary_file_path = f"{output_dir}/aws-cost-summary-{account_id}-{start_date}_to_{end_date}.xlsx"
     
     with pd.ExcelWriter(summary_file_path, engine='openpyxl') as writer:
+        # Add report info sheet
+        add_report_info(writer, account_id, start_date, end_date)
+        
+        # Add summary sheet
         summary_df.to_excel(writer, sheet_name='Service Cost Summary', index=False)
     
     return raw_file_path, summary_file_path
@@ -127,11 +174,14 @@ def main():
     # Initialize Cost Explorer client
     ce_client = boto3.client('ce')
     
+    print(f"Generating AWS cost report for account {args.account_id}")
+    print(f"Period: {args.start_date} to {args.end_date}")
+    
     # Get cost data
     response = get_cost_and_usage(ce_client, args.start_date, args.end_date, args.account_id)
     
     # Process data
-    df = process_cost_data(response)
+    df = process_cost_data(response, args.account_id, args.start_date, args.end_date)
     
     # Save to Excel
     raw_path, summary_path = save_to_excel(df, args.account_id, args.start_date, args.end_date)
