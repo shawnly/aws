@@ -654,6 +654,36 @@ class AWSCostReportGenerator:
                     'month': month_date,
                     'account_costs': account_costs
                 })
+                
+            print(f"Successfully retrieved costs for all accounts in one API call")
+            
+        except Exception as e:
+            print(f"Failed to get all costs in one call: {str(e)}")
+            print("Falling back to per-account data retrieval (slower method)...")
+            
+            # Fall back to the original method of getting costs per account
+            monthly_summary_data = []
+            
+            for i, date_range in enumerate(date_ranges):
+                month_date = date_range['month_name']
+                
+                # Get cost data for all accounts for this month
+                account_costs = []
+                for account in accounts:
+                    cost_data = self.get_cost_data(account['id'], date_range['start'], date_range['end'], i)
+                    account_costs.append({
+                        'id': account['id'],
+                        'name': account['name'],
+                        'cost': cost_data['total_cost']  # Using amortized cost
+                    })
+                
+                # Sort by cost (descending)
+                account_costs.sort(key=lambda x: x['cost'], reverse=True)
+                
+                monthly_summary_data.append({
+                    'month': month_date,
+                    'account_costs': account_costs
+                })
         
         # Create the summary visualization
         print("Creating organization summary visualization...")
@@ -926,34 +956,4 @@ if __name__ == "__main__":
         generator.generate_cost_report(args.account, f'Account {args.account}', date_ranges)
     else:
         # Run the normal process for all accounts
-        generator.run()account_costs': account_costs
-                })
-                
-            print(f"Successfully retrieved costs for all accounts in one API call")
-            
-        except Exception as e:
-            print(f"Failed to get all costs in one call: {str(e)}")
-            print("Falling back to per-account data retrieval (slower method)...")
-            
-            # Fall back to the original method of getting costs per account
-            monthly_summary_data = []
-            
-            for i, date_range in enumerate(date_ranges):
-                month_date = date_range['month_name']
-                
-                # Get cost data for all accounts for this month
-                account_costs = []
-                for account in accounts:
-                    cost_data = self.get_cost_data(account['id'], date_range['start'], date_range['end'], i)
-                    account_costs.append({
-                        'id': account['id'],
-                        'name': account['name'],
-                        'cost': cost_data['total_cost']  # Using amortized cost
-                    })
-                
-                # Sort by cost (descending)
-                account_costs.sort(key=lambda x: x['cost'], reverse=True)
-                
-                monthly_summary_data.append({
-                    'month': month_date,
-                    '
+        generator.run()
