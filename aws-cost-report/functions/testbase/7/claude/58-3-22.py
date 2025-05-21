@@ -151,11 +151,11 @@ class AWSCostDataRetriever:
             
         return date_ranges
     
-    def get_account_cost_data(self, account_id, start_date, end_date, month_index=0):
+    def get_account_cost_data(self, account_id, start_date, end_date):
         """Get cost data for a specific account and date range."""
         if self.use_mock_data:
-            # Generate mock data for testing
-            random.seed(int(account_id) % 10000 + month_index * 100)
+            # Generate some mock data for testing with fixed seed for consistency
+            random.seed(int(account_id) % 10000)
             
             services = []
             total_cost = 0
@@ -164,6 +164,9 @@ class AWSCostDataRetriever:
                 cost = random.uniform(100, 1000)
                 services.append({'service': service, 'cost': cost})
                 total_cost += cost
+                
+            # Sort services by cost (descending)
+            services.sort(key=lambda x: x['cost'], reverse=True)
                 
             return {
                 'total_cost': total_cost,
@@ -208,22 +211,15 @@ class AWSCostDataRetriever:
                 cost = float(group['Metrics']['UnblendedCost']['Amount'])
                 services.append({'service': service_name, 'cost': cost})
             
-            # Sort by cost (descending) but make sure refunds come last
-            # (since they have negative values, a simple sort would put them first)
-            refund_services = [s for s in services if 'refund' in s['service'].lower()]
-            other_services = [s for s in services if 'refund' not in s['service'].lower()]
-            
-            other_services.sort(key=lambda x: x['cost'], reverse=True)
-            refund_services.sort(key=lambda x: x['cost'], reverse=True)
-            
-            sorted_services = other_services + refund_services
+            # Sort by cost (descending)
+            services.sort(key=lambda x: x['cost'], reverse=True)
             
             # Calculate total cost by summing all service costs
             total_cost = sum(service['cost'] for service in services)
             
             return {
                 'total_cost': total_cost,
-                'services': sorted_services
+                'services': services
             }
                 
         except Exception as e:
@@ -248,7 +244,7 @@ class AWSCostDataRetriever:
         
         for i, date_range in enumerate(date_ranges):
             print(f"  Processing month {i+1}/{len(date_ranges)}: {date_range['month_name']}...")
-            cost_data = self.get_account_cost_data(account_id, date_range['start'], date_range['end'], i)
+            cost_data = self.get_account_cost_data(account_id, date_range['start'], date_range['end'])
             cost_data_by_month.append(cost_data)
             print(f"    Total cost: ${cost_data['total_cost']:.2f}, Services: {len(cost_data['services'])}")
             
@@ -318,7 +314,7 @@ class AWSCostDataRetriever:
                 account_id = account['id']
                 account_name = account['name']
                 
-                cost_data = self.get_account_cost_data(account_id, start, end, i)
+                cost_data = self.get_account_cost_data(account_id, start, end)
                 
                 account_costs.append({
                     'id': account_id,
@@ -358,101 +354,77 @@ class AWSCostDataRetriever:
         )
         os.makedirs(output_path, exist_ok=True)
         
-        # Generate the report file name with monthly date ranges
-        first_month_start = date_ranges[0]['start']
-        last_month_end = date_ranges[-1]['end']
+        # Generate the report file name
+        start_date = date_ranges[0]['start']
+        end_date = date_ranges[-1]['end']
         
+        # CSV file path (using the original naming convention)
         csv_file = os.path.join(
             output_path,
-            f"aws-cost-report-{account_id}-{first_month_start}_to_{last_month_end}.csv"
+            f"aws-cost-report-{account_id}-{start_date}-{end_date}.csv"
         )
         
+        # Excel file path (using the enhanced naming convention)
         excel_file = os.path.join(
             output_path,
-            f"aws-cost-report-{account_id}-{first_month_start}_to_{last_month_end}.xlsx"
+            f"aws-cost-report-{account_id}-{start_date}_to_{end_date}.xlsx"
         )
         
-        # Prepare data for CSV format
+        # Prepare CSV data (exactly as in the original script)
         csv_data = []
-        for i, cost_data in enumerate(cost_data_by_month):
+        for i, month_data in enumerate(cost_data_by_month):
             month = date_ranges[i]['month_name']
             
             # Add row for total monthly cost
             csv_data.append({
                 'month': month,
                 'service': 'TOTAL',
-                'cost': cost_data['total_cost']
+                'cost': month_data['total_cost']
             })
             
             # Add rows for each service
-            for service_data in cost_data['services']:
+            for service_data in month_data['services']:
                 csv_data.append({
                     'month': month,
                     'service': service_data['service'],
                     'cost': service_data['cost']
                 })
         
-        # Save CSV data - this ensures data consistency with older versions
+        # Save CSV data - using the exact format from the original script
         df = pd.DataFrame(csv_data)
-        df.to_csv(csv_file, index=False, float_format='%.6f')  # Use high precision
+        df.to_csv(csv_file, index=False)
         print(f"Account cost data saved to {csv_file}")
         
-        # Create Excel file with multiple sheets
+        # Create Excel file with multiple sheets if requested
         if not csv_only:
             try:
-                # Prepare data for the Excel format (with start and end dates)
-                excel_data = []
-                for i, cost_data in enumerate(cost_data_by_month):
-                    month = date_ranges[i]['month_name']
-                    month_start = date_ranges[i]['start']
-                    month_end = date_ranges[i]['end']
-                    
-                    # Add row for total monthly cost
-                    excel_data.append({
-                        'month': month,
-                        'start_date': month_start,
-                        'end_date': month_end,
-                        'service': 'TOTAL',
-                        'cost': cost_data['total_cost']
-                    })
-                    
-                    # Add rows for each service
-                    for service_data in cost_data['services']:
-                        excel_data.append({
-                            'month': month,
-                            'start_date': month_start,
-                            'end_date': month_end,
-                            'service': service_data['service'],
-                            'cost': service_data['cost']
-                        })
-                
                 with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
                     # Create overall dataframe and write to Excel
-                    excel_df = pd.DataFrame(excel_data)
-                    excel_df.to_excel(writer, sheet_name='All Months', index=False)
+                    df.to_excel(writer, sheet_name='All Months', index=False)
                     
                     # Create individual sheets for each month
-                    for i, cost_data in enumerate(cost_data_by_month):
+                    for i, month_data in enumerate(cost_data_by_month):
                         month = date_ranges[i]['month_name']
                         
                         # Create month-specific data
-                        month_data = []
+                        month_data_list = []
                         
                         # Add row for total monthly cost
-                        month_data.append({
+                        month_data_list.append({
                             'service': 'TOTAL',
-                            'cost': cost_data['total_cost']
+                            'cost': month_data['total_cost']
                         })
                         
                         # Add rows for each service
-                        for service_data in cost_data['services']:
-                            month_data.append({
+                        for service_data in month_data['services']:
+                            month_data_list.append({
                                 'service': service_data['service'],
                                 'cost': service_data['cost']
                             })
                         
                         # Create monthly dataframe and write to Excel
-                        month_df = pd.DataFrame(month_data)
+                        month_df = pd.DataFrame(month_data_list)
+                        # Create a simple sheet name without date range to avoid length issues
                         sheet_name = month.replace(" ", "_")[:31]  # Excel sheet name limit
                         month_df.to_excel(writer, sheet_name=sheet_name, index=False)
                 
@@ -489,21 +461,23 @@ class AWSCostDataRetriever:
         )
         os.makedirs(output_path, exist_ok=True)
         
-        # Generate the report file name with monthly date ranges
-        first_month_start = date_ranges[0]['start']
-        last_month_end = date_ranges[-1]['end']
+        # Generate the report file name
+        start_date = date_ranges[0]['start']
+        end_date = date_ranges[-1]['end']
         
+        # CSV file path (using the original naming convention)
         csv_file = os.path.join(
             output_path,
-            f"aws-cost-summary-{first_month_start}_to_{last_month_end}.csv"
+            f"aws-cost-summary-{start_date}-{end_date}.csv"
         )
         
+        # Excel file path (using the enhanced naming convention)
         excel_file = os.path.join(
             output_path,
-            f"aws-cost-summary-{first_month_start}_to_{last_month_end}.xlsx"
+            f"aws-cost-summary-{start_date}_to_{end_date}.xlsx"
         )
         
-        # Prepare data for CSV format
+        # Prepare CSV data (exactly as in the original script)
         csv_data = []
         for month_idx, month_data in enumerate(monthly_cost_data):
             month = date_ranges[month_idx]['month_name']
@@ -516,35 +490,17 @@ class AWSCostDataRetriever:
                     'cost': account_cost['cost']
                 })
         
-        # Save CSV data - this ensures data consistency with older versions
+        # Save CSV data - using the exact format from the original script
         df = pd.DataFrame(csv_data)
-        df.to_csv(csv_file, index=False, float_format='%.6f')  # Use high precision
+        df.to_csv(csv_file, index=False)
         print(f"Organization cost summary saved to {csv_file}")
         
-        # Create Excel file with multiple sheets
+        # Create Excel file with multiple sheets if requested
         if not csv_only:
             try:
-                # Prepare data for the Excel format (with start and end dates)
-                excel_data = []
-                for month_idx, month_data in enumerate(monthly_cost_data):
-                    month = date_ranges[month_idx]['month_name']
-                    month_start = date_ranges[month_idx]['start']
-                    month_end = date_ranges[month_idx]['end']
-                    
-                    for account_cost in month_data:
-                        excel_data.append({
-                            'month': month,
-                            'start_date': month_start,
-                            'end_date': month_end,
-                            'account_id': account_cost['id'],
-                            'account_name': account_cost['name'],
-                            'cost': account_cost['cost']
-                        })
-                
                 with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
                     # Create overall dataframe and write to Excel
-                    excel_df = pd.DataFrame(excel_data)
-                    excel_df.to_excel(writer, sheet_name='All Months', index=False)
+                    df.to_excel(writer, sheet_name='All Months', index=False)
                     
                     # Create individual sheets for each month
                     for month_idx, month_data in enumerate(monthly_cost_data):
@@ -573,6 +529,7 @@ class AWSCostDataRetriever:
                         
                         # Create monthly dataframe and write to Excel
                         month_df = pd.DataFrame(month_data_list)
+                        # Create a simple sheet name without date range to avoid length issues
                         sheet_name = month.replace(" ", "_")[:31]  # Excel sheet name limit
                         month_df.to_excel(writer, sheet_name=sheet_name, index=False)
                 
