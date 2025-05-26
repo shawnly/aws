@@ -1,1 +1,0 @@
-python aws_cost_reports.py --mock --months 6 --multi-month

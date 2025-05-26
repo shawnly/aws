@@ -1,1 +1,0 @@
-An error occurred (AccessDeniedException) when calling the GetCostAndUsage operation: User not enabled for cost explorer access
