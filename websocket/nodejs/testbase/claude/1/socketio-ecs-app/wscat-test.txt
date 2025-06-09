@@ -1,0 +1,191 @@
+🔌 Basic WSS Connection Test:
+
+bash
+
+# Connect to your Socket.IO WebSocket endpoint
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+
+🎯 Socket.IO Specific Testing:
+1. Connect with Socket.IO Protocol:
+
+bash
+
+# Socket.IO v4 connection
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+
+# If that doesn't work, try without EIO version
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?transport=websocket"
+
+2. Expected Connection Flow:
+
+bash
+
+# After connection, you should see:
+Connected (press CTRL+C to quit)
+< 0{"sid":"abc123","upgrades":[],"pingInterval":25000,"pingTimeout":20000}
+< 40
+
+3. Send Socket.IO Messages:
+
+bash
+
+# Send a custom message (after connection established):
+> 42["message",{"text":"Hello from wscat","user":"CLI User"}]
+
+# You should receive broadcasts from other clients:
+< 42["message",{"type":"user","text":"Hello from wscat","user":"CLI User","timestamp":"2025-06-08T10:30:00.000Z"}]
+
+🔍 Alternative Testing Methods:
+Method 1: Test Raw WebSocket (Non-Socket.IO):
+
+bash
+
+# If you want to test basic WebSocket connectivity
+wscat -c "wss://your-alb-domain/socketio-server/"
+
+Method 2: Test with Headers:
+
+bash
+
+# Add custom headers if needed
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket" \
+  -H "Origin: https://your-alb-domain"
+
+Method 3: Verbose Mode:
+
+bash
+
+# See detailed connection info
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket" -x
+
+🧪 Complete Test Scenarios:
+Scenario 1: Connection Test
+
+bash
+
+# Connect
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+
+# Expected output:
+# Connected (press CTRL+C to quit)
+# < 0{"sid":"...","upgrades":[],"pingInterval":25000,"pingTimeout":20000}
+# < 40
+
+Scenario 2: Send Messages
+
+bash
+
+# After connection, send:
+> 42["message",{"text":"Test message","user":"wscat-user"}]
+
+# Should receive back:
+< 42["message",{"type":"user","text":"Test message","user":"wscat-user","timestamp":"..."}]
+
+Scenario 3: Receive System Messages
+
+bash
+
+# You should automatically receive welcome message:
+< 42["message",{"type":"system","text":"Welcome to socketio-server! Connected via websocket","timestamp":"..."}]
+
+🚨 Troubleshooting WSS Connection:
+If Connection Fails:
+
+Error: "Error: connect ECONNREFUSED"
+
+bash
+
+# Check if ALB is routing correctly
+curl -I https://your-alb-domain/socketio-server/socket.io/socket.io.js
+
+Error: "Error: Unexpected server response: 503"
+
+bash
+
+# Same 503 issue - ALB routing problem
+# Need to fix the application path serving first
+
+Error: "Error: Unexpected server response: 404"
+
+bash
+
+# Socket.IO endpoint not found
+# Try different path:
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/"
+
+🎯 Socket.IO Message Format Reference:
+Message Types:
+
+bash
+
+# Connection acknowledgment
+0{"sid":"..."}
+
+# Namespace connection
+40
+
+# Event with data
+42["event_name", data]
+
+# Ping/Pong (keepalive)
+2  # ping
+3  # pong
+
+Your App's Expected Messages:
+
+bash
+
+# Welcome message (automatic):
+< 42["message",{"type":"system","text":"Welcome to socketio-server!..."}]
+
+# Send custom message:
+> 42["message",{"text":"Hello","user":"TestUser"}]
+
+# Receive broadcast:
+< 42["message",{"type":"user","text":"Hello","user":"TestUser","timestamp":"..."}]
+
+📱 Multi-Client Testing:
+Terminal 1 (wscat):
+
+bash
+
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+> 42["message",{"text":"Message from wscat","user":"CLI"}]
+
+Terminal 2 (another wscat):
+
+bash
+
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+# Should receive the message from Terminal 1
+< 42["message",{"type":"user","text":"Message from wscat","user":"CLI","timestamp":"..."}]
+
+🔧 Before Testing WSS:
+
+Since you're getting 503 for the main app, fix the static file serving issue first:
+
+    Update your src/app.js with the path fix I mentioned earlier
+    Rebuild and redeploy:
+
+    bash
+
+    ./scripts/build-and-push.sh
+    ./scripts/deploy.sh latest
+
+    Then test WSS connection
+
+🎯 Quick WSS Test Commands:
+
+bash
+
+# 1. Basic connection test
+wscat -c "wss://your-alb-domain/socketio-server/socket.io/?EIO=4&transport=websocket"
+
+# 2. If connected successfully, send a message:
+42["message",{"text":"Testing WSS","user":"wscat"}]
+
+# 3. Verify you receive the echo/broadcast back
+
+Try the basic connection first and let me know what error message you get - that will help determine if it's the same 503 routing issue or a different WebSocket-specific problem!
+
+
